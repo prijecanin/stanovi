@@ -578,21 +578,8 @@ async function renameConfig(c: ConfRow) {
           {calc.items.map((i, idx) => {
             const [minN, maxN] = netoRange(i.code);
 
-// BRP ostalih tipova izravno iz stanja 'types' (stabilnije nego preko calc)
-const brpOther = types.reduce((s, t, j) => (
-  j !== idx ? s + t.units * brpPerUnit(t.neto) : s
-), 0);
-
-// maksimum koji ovaj slider realno može zauzeti
-const maxUnits = Math.max(0, Math.floor((brpLimit - brpOther) / i.brpPerUnit));
-
-// klampaj value da NIKAD ne pređe max (sprečava čudno ponašanje range-a)
-const rawValue  = types[idx].units;
-const safeValue = Math.min(rawValue, maxUnits);
-
-// postotak boje slidera
-const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit)); // kao admin
-const value    = i.units;
+const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit)); // ADMIN logika
+const value    = i.units;                                           // broj stanova iz base
 const pct      = maxUnits > 0 ? Math.round((value / maxUnits) * 100) : 0;
 const color    = COLORS[idx % COLORS.length];
 const locked   = !!types[idx].locked;
@@ -650,23 +637,21 @@ const locked   = !!types[idx].locked;
                 <div>
                   <div className="flex items-baseline justify-between">
                     <div className="text-xs text-gray-500">Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b></div>
-                    <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(safeValue)}</b></div>
+                    <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(value)}</b></div>
                   </div>
-                  <input
+<input
   className="w-full mt-2 h-2 rounded-full appearance-none"
   type="range"
   min={0}
   max={maxUnits}
   step={1}
-  value={safeValue}
+  value={value}
   onChange={e => changeUnits(i.id, Number(e.target.value))}
   disabled={locked}
   style={{
     background: `linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
     color,
-    accentColor: color as any,
-    opacity: locked ? 0.6 : 1,
-    cursor: locked ? 'not-allowed' : 'pointer'
+    accentColor: color as any
   }}
 />
 

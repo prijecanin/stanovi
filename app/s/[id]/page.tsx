@@ -98,6 +98,15 @@ function rebalanceUnits<T extends { id: string; neto: number; units: number; loc
   return arr.map(t => ({ ...t, units: Math.max(0, nextUnits.get(t.id) || 0) }));
 }
 
+type ConfRow = {
+  id: string;
+  name: string;
+  created_at: string;
+  brp_limit: number;
+  ratio: number;
+  tolerance: number;
+  client_key: string; // ⭐ ako već nije tu
+};
 
 
 type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
@@ -420,6 +429,32 @@ function changeUnits(id: string, unitsIn: number) {
       setTimeout(()=>setNotice(null),3500);
     }
   }
+
+async function renameConfig(c: ConfRow) {
+  const current = c.name || "Konfiguracija";
+  const next = window.prompt("Novi naziv konfiguracije:", current)?.trim();
+  if (!next || next === current) return;
+
+  try {
+    const { error } = await supabase
+      .from("configurations")
+      .update({ name: next })
+      .eq("id", c.id);
+
+    if (error) throw error;
+
+    // lokalno ažuriraj prikaz
+    setConfigs(prev => prev.map(x => (x.id === c.id ? { ...x, name: next } : x)));
+
+    // (opcionalno) kratka poruka korisniku
+    setNotice?.("Naziv promijenjen.");
+    setTimeout?.(() => setNotice?.(null), 2500);
+  } catch (e: any) {
+    setNotice?.(`Greška pri preimenovanju: ${e?.message ?? e}`);
+    setTimeout?.(() => setNotice?.(null), 4000);
+  }
+}
+
 
   // ---- render
   if (loading) return <main className="p-4">Učitavanje…</main>;

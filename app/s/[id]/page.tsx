@@ -593,7 +593,10 @@ const color    = COLORS[idx % COLORS.length];
 const locked   = !!types[idx].locked;
 
             return (
-              <div key={i.id} className="grid items-center gap-3" style={{gridTemplateColumns:'140px 1.1fr 4.5fr 1.2fr'}}>
+              <div key={i.id}
+     className="grid items-center gap-y-3 gap-x-0"
+     style={{ gridTemplateColumns: '140px 1.15fr 4.6fr 1.2fr' }}>
+
                 {/* oznaka + lokot + opis */}
                 <div className="flex flex-col">
                   <div className="flex items-center gap-2">

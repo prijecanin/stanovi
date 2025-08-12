@@ -11,6 +11,99 @@ const RATIO = 0.65;
 const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444','#8b5cf6','#14b8a6'] as const;
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
+const brpPerUnit = (neto:number) => Math.max(1, Math.round((neto||0)/RATIO));
+
+function totalAchieved(list: {units:number; neto:number}[]) {
+  return list.reduce((s, t) => s + t.units * brpPerUnit(t.neto), 0);
+}
+
+/**
+ * Rebalance: drži ukupni BRP = brpLimit.
+ * - 'pinnedId' je tip koji je upravo promijenjen (njega ne skaliramo).
+ * - zaključane tipove ne diramo.
+ */
+function rebalanceUnits(
+  arr: {id:string; neto:number; units:number; locked?:boolean}[],
+  brpLimit: number,
+  pinnedId?: string
+) {
+  // snapshot s brpPerUnit
+  const items = arr.map(t => ({ ...t, bpu: brpPerUnit(t.neto) }));
+  const isLocked = (t:any) => !!t.locked;
+
+  const pinned = pinnedId ? items.find(t => t.id === pinnedId) : undefined;
+  const lockedSum = items.filter(isLocked).reduce((s,t)=>s + t.units*t.bpu, 0);
+  const pinnedSum = pinned ? pinned.units * pinned.bpu : 0;
+
+  const free = items.filter(t => !isLocked(t) && t.id !== pinnedId);
+  const freeSum = free.reduce((s,t)=>s + t.units*t.bpu, 0);
+
+  // BRP koji slobodni tipovi trebaju "pokriti"
+  const targetFree = Math.max(0, brpLimit - lockedSum - pinnedSum);
+
+  // skaliranje slobodnih
+  let nextUnits = new Map<string, number>(items.map(t => [t.id, t.units]));
+  if (free.length > 0) {
+    if (freeSum > 0) {
+      const factor = targetFree / freeSum;
+      free.forEach(t => nextUnits.set(t.id, Math.max(0, Math.round(t.units * factor))));
+    } else {
+      // ako su svi free=0, dodaj po jedan dok ne potrošimo target
+      let left = targetFree;
+      const sorted = [...free].sort((a,b)=>a.bpu - b.bpu);
+      outer: while (left >= (sorted[0]?.bpu ?? Infinity)) {
+        for (const t of sorted) {
+          if (left >= t.bpu) {
+            nextUnits.set(t.id, (nextUnits.get(t.id) || 0) + 1);
+            left -= t.bpu;
+          }
+          if (left < (sorted[0]?.bpu ?? Infinity)) break outer;
+        }
+      }
+    }
+  }
+
+  // fina korekcija da pogodimo cilj što bolje
+  const achieved = items.reduce((s,t)=>s + (nextUnits.get(t.id) || 0) * t.bpu, 0);
+  let diff = brpLimit - achieved;
+  if (free.length > 0 && diff !== 0) {
+    if (diff > 0) {
+      // dodaj stanove najjeftinijim free tipovima dok možemo
+      const asc = [...free].sort((a,b)=>a.bpu - b.bpu);
+      let guard = 10000;
+      while (diff >= asc[0].bpu && guard--) {
+        for (const t of asc) {
+          if (diff >= t.bpu) {
+            nextUnits.set(t.id, (nextUnits.get(t.id) || 0) + 1);
+            diff -= t.bpu;
+          }
+          if (diff < asc[0].bpu) break;
+        }
+      }
+    } else {
+      // smanji stanove s najskupljih free tipova
+      const desc = [...free].sort((a,b)=>b.bpu - a.bpu);
+      let guard = 10000;
+      while (diff < 0 && guard--) {
+        let changed = false;
+        for (const t of desc) {
+          const cur = nextUnits.get(t.id) || 0;
+          if (cur > 0) {
+            nextUnits.set(t.id, cur - 1);
+            diff += t.bpu;
+            changed = true;
+            if (diff >= 0) break;
+          }
+        }
+        if (!changed) break; // nema što više smanjiti
+      }
+    }
+  }
+
+  return arr.map(t => ({ ...t, units: Math.max(0, nextUnits.get(t.id) || 0) }));
+}
+
+
 type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
 
 type ConfRow = {
@@ -166,22 +259,44 @@ export default function SharePage({ params }: { params: { id: string } }) {
   }, [types, brpLimit]);
 
   // promjene
-  function changeNeto(id:string, raw:string) {
-    setTypes(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      const [minN, maxN] = netoRange(t.code);
-      const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw)||t.neto)));
-      return { ...t, neto: n };
-    }));
-  }
-  function changeUnits(id: string, unitsIn: number) {
-    const target = Math.max(0, Math.round(Number(unitsIn)||0));
-    setTypes(prev => prev.map(t => {
-      if (t.id !== id) return t;
-      if (t.locked) return t;
-      return { ...t, units: target };
-    }));
-  }
+  function changeNeto(id: string, raw: string) {
+  setTypes(prev => {
+    const t = prev.find(x => x.id===id);
+    if (!t) return prev;
+    const [minN, maxN] = netoRange(t.code);
+    const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw)||t.neto)));
+    const next = prev.map(x => x.id===id ? { ...x, neto: n } : x);
+    return rebalanceUnits(next, brpLimit, id);
+  });
+}
+
+function changeUnits(id: string, unitsIn: number) {
+  setTypes(prev => {
+    const pinned = prev.find(t => t.id === id);
+    if (!pinned) return prev;
+
+    const bpuPinned = brpPerUnit(pinned.neto);
+
+    // BRP ostalih tipova (bez "pinned")
+    const others = prev.filter(t => t.id !== id);
+    const othersAchieved = others.reduce((s, t) => s + t.units * brpPerUnit(t.neto), 0);
+
+    // maksimalan broj stanova za pinned tako da ostavljamo mjesta za ostalo
+    const maxUnitsByRest = Math.max(0, Math.floor((brpLimit - othersAchieved) / bpuPinned));
+
+    const nextPinnedUnits = Math.min(
+      Math.max(0, Math.round(Number(unitsIn) || 0)),
+      maxUnitsByRest
+    );
+
+    const withPinned = prev.map(t => t.id === id ? { ...t, units: nextPinnedUnits } : t);
+
+    // redistribuiraj slobodne tipove da zbroj BRP ostane = brpLimit
+    return rebalanceUnits(withPinned, brpLimit, id);
+  });
+}
+
+
 
   // XLS export
   async function exportXLS() {
@@ -447,7 +562,8 @@ export default function SharePage({ params }: { params: { id: string } }) {
         <div className="grid gap-3">
           {calc.items.map((i, idx) => {
             const [minN, maxN] = netoRange(i.code);
-            const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit));
+            const othersAchieved = calc.totalAchieved - (i.units * i.brpPerUnit);
+            const maxUnits = Math.max(0, Math.floor((brpLimit - othersAchieved) / i.brpPerUnit));
             const pct = maxUnits > 0 ? Math.round((types[idx].units / maxUnits) * 100) : 0;
             const color = COLORS[idx % COLORS.length];
             const locked = !!types[idx].locked;

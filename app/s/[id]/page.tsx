@@ -619,16 +619,21 @@ const locked   = !!types[idx].locked;
                 </div>
 
                 {/* NETO */}
-                <input
-  className="px-3 py-2 border rounded-xl w-full"
-  type="number"
-  min={minN}
-  max={maxN}
-  step={1}
-  value={types[idx].neto}
-  onChange={e => changeNeto(i.id, e.target.value)}
-/>
-<div className="text-xs text-gray-500 mt-1">BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
+                {/* NETO + BRP po stanu (JEDAN grid-item) */}
+<div className="flex flex-col">
+  <input
+    className="px-3 py-2 border rounded-xl w-full"
+    type="number"
+    min={minN}
+    max={maxN}
+    step={1}
+    value={types[idx].neto}
+    onChange={e => changeNeto(i.id, e.target.value)}
+  />
+  <div className="text-xs text-gray-500 mt-1">
+    BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²
+  </div>
+</div>
 
                 {/* slider BROJ STANOVA */}
                 <div>

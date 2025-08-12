@@ -102,23 +102,6 @@ type ConfRow = {
   id: string;
   name: string;
   created_at: string;
-  project_id: string;
-  brp_limit: number | null;
-  ratio: number | null;
-  tolerance: number | null;
-  source: string | null;
-  client_key: string | null;
-  client_name: string | null;
-};
-
-
-
-type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
-
-type ConfRow = {
-  id: string;
-  name: string;
-  created_at: string;
   project_id?: string | null;
   brp_limit?: number | null;
   ratio?: number | null;
@@ -127,6 +110,8 @@ type ConfRow = {
   client_key?: string | null;
   client_name?: string | null;
 };
+
+type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
 
 function netoRange(code: string): [number, number] {
   switch (code) {

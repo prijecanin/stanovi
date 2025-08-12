@@ -111,16 +111,20 @@ type ConfRow = {
   client_name?: string | null;
 };
 
-type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
+type TypeState = { id:string; code:string; neto:number; share:number; locked?: boolean; desc?: string };
 
-function netoRange(code: string): [number, number] {
-  switch (code) {
-    case '1S': return [25, 35];
-    case '2S': return [35, 55];
-    case '3S': return [55, 75];
-    case '4S': return [75, 120];
-    default:   return [20, 200];
-  }
+function normalizeShares(arr: TypeState[], pinnedId?: string) {
+  const lockedSum = arr.filter(t => t.locked).reduce((s, t) => s + (Number(t.share)||0), 0);
+  const pinned = pinnedId ? arr.find(t => t.id === pinnedId) : undefined;
+  const pinnedShare = pinned && !pinned.locked ? (Number(pinned.share)||0) : 0;
+  const free = arr.filter(t => !t.locked && t.id !== pinnedId);
+  const freeSum = free.reduce((s, t) => s + (Number(t.share)||0), 0);
+  const targetFree = Math.max(0, 100 - lockedSum - pinnedShare);
+  if (free.length === 0 || freeSum === 0) return arr;
+  return arr.map(t => (t.locked || t.id === pinnedId)
+    ? t
+    : { ...t, share: (Number(t.share)||0) / freeSum * targetFree }
+  );
 }
 function defaultDesc(code: string) {
   switch (code) {
@@ -195,22 +199,26 @@ export default function SharePage({ params }: { params: { id: string } }) {
         if (error) throw error;
 
         const rows = (data ?? []) as Array<{id:string; code:string; description:string|null; neto:number; share:number}>;
-        const initial: TypeState[] = rows.map(r => {
-          const [minN, maxN] = netoRange(r.code);
-          const netoClamped = Math.max(minN, Math.min(maxN, Math.round(r.neto)));
-          const brpPerUnit  = Math.max(1, Math.round(netoClamped / RATIO));
-          const brpTarget   = (proj.brp_limit ?? 12500) * (Number(r.share)||0) / 100;
-          const units       = Math.max(0, Math.round(brpTarget / brpPerUnit));
-          return { id: r.id, code: r.code, neto: netoClamped, units, locked:false, desc: r.description ?? defaultDesc(r.code) };
-        });
-// ... poslije const initial: TypeState[] = rows.map(...)
-          const initialBalanced = rebalanceUnits(initial, proj.brp_limit ?? 12500);
-          setName(proj.name);
-          setBrpLimit(proj.brp_limit ?? 12500);
 
-        if (!alive) return;
-        setName(proj.name);
-        setBrpLimit(proj.brp_limit ?? 12500);
+const initial: TypeState[] = rows.map(r => {
+  const [minN, maxN] = netoRange(r.code);
+  const netoClamped = Math.max(minN, Math.min(maxN, Math.round(r.neto)));
+  return {
+    id: r.id,
+    code: r.code,
+    neto: netoClamped,
+    share: Number(r.share) || 0,
+    locked: false,
+    desc: r.description ?? defaultDesc(r.code)
+  };
+});
+
+const initialNormalized = normalizeShares(initial);   // ⬅️ udjeli = 100%
+setName(proj.name);
+setBrpLimit(proj.brp_limit ?? 12500);
+if (!alive) return;
+setTypes(initialNormalized);
+
         // ⬇️ umjesto setTypes(initial)
         setTypes(initialBalanced);
       } catch (e:any) {
@@ -243,59 +251,47 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
   // kalkulacija iz lokalnog stanja
   const calc = useMemo(() => {
-    const items = types.map(t => {
-      const brpPerUnit   = Math.max(1, Math.round((t.neto||0)/RATIO));
-      const netoPerUnit  = Math.round(brpPerUnit*RATIO);
-      const achievedBrp  = t.units*brpPerUnit;
-      const share        = brpLimit>0 ? (achievedBrp/brpLimit*100) : 0;
-      return { ...t, brpPerUnit, netoPerUnit, achievedBrp, share };
-    });
-    return {
-      items,
-      totalAchieved: items.reduce((s,i)=>s+i.achievedBrp,0),
-      totalNeto:     items.reduce((s,i)=>s+i.netoPerUnit*i.units,0)
-    };
-  }, [types, brpLimit]);
+  const items = types.map(t => {
+    const brpPerUnit   = Math.max(1, Math.round((t.neto||0)/RATIO));
+    const netoPerUnit  = Math.round(brpPerUnit*RATIO);
+    const brpTarget    = brpLimit * ((Number(t.share)||0) / 100);
+    const units        = Math.max(0, Math.round(brpTarget / brpPerUnit));
+    const achievedBrp  = units * brpPerUnit;
+    return { ...t, brpPerUnit, netoPerUnit, brpTarget, units, achievedBrp, share: Number(t.share)||0 };
+  });
+  return {
+    items,
+    totalAchieved: items.reduce((s,i)=>s+i.achievedBrp,0),
+    totalNeto:     items.reduce((s,i)=>s+i.netoPerUnit*i.units,0)
+  };
+}, [types, brpLimit]);
 
   // promjene
-  function changeNeto(id: string, raw: string) {
-setTypes(prev => {
-  const t = prev.find(x => x.id===id)!;
-  const [minN,maxN] = netoRange(t.code);
-  const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw) || t.neto)));
-  const next = prev.map(x => x.id===id ? ({ ...x, neto: n }) : x);
-  return rebalanceUnits(next, brpLimit, id);   // ✔ ovo sada vraća TypeState[]
-});
-
-}
-
 function changeUnits(id: string, unitsIn: number) {
+  const targetUnits = Math.max(0, Math.round(Number(unitsIn) || 0));
   setTypes(prev => {
-    const pinned = prev.find(t => t.id === id);
-    if (!pinned) return prev;
+    const t = prev.find(x => x.id === id);
+    if (!t) return prev;
+    const bpu = Math.max(1, Math.round((t.neto || 0) / RATIO));
+    const newShare = (bpu * targetUnits) / Math.max(1, brpLimit) * 100;
 
-    const bpuPinned = brpPerUnit(pinned.neto);
+    const updated = prev.map(x => x.id === id ? { ...x, share: newShare } : x);
+    const normalized = normalizeShares(updated, id)
+      .map(y => ({ ...y, share: Math.round((Number(y.share)||0) * 100) / 100 })); // kozmetika
 
-    // BRP ostalih tipova (bez "pinned")
-    const others = prev.filter(t => t.id !== id);
-    const othersAchieved = others.reduce((s, t) => s + t.units * brpPerUnit(t.neto), 0);
-
-    // maksimalan broj stanova za pinned tako da ostavljamo mjesta za ostalo
-    const maxUnitsByRest = Math.max(0, Math.floor((brpLimit - othersAchieved) / bpuPinned));
-
-    const nextPinnedUnits = Math.min(
-      Math.max(0, Math.round(Number(unitsIn) || 0)),
-      maxUnitsByRest
-    );
-
-    const withPinned = prev.map(t => t.id === id ? { ...t, units: nextPinnedUnits } : t);
-
-    // redistribuiraj slobodne tipove da zbroj BRP ostane = brpLimit
-    return rebalanceUnits(withPinned, brpLimit, id);
+    return normalized;
   });
 }
 
-
+function changeNeto(id: string, raw: string) {
+  setTypes(prev => {
+    const t = prev.find(x => x.id === id);
+    if (!t) return prev;
+    const [minN, maxN] = netoRange(t.code);
+    const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw) || t.neto)));
+    return prev.map(x => x.id===id ? { ...x, neto: n } : x);
+  });
+}
 
   // XLS export
   async function exportXLS() {
@@ -390,9 +386,11 @@ setTypes(prev => {
     if (!row) return t;
     const [minN, maxN] = netoRange(t.code);
     const netoClamped = Math.max(minN, Math.min(maxN, Math.round(Number(row.neto_per_unit) || t.neto)));
-    return { ...t, neto: netoClamped, units: Math.max(0, Math.round(Number(row.units) || 0)) };
+    const bpu = Math.max(1, Math.round(netoClamped / RATIO));
+    const share = (Math.max(0, Math.round(Number(row.units) || 0)) * bpu) / Math.max(1, (conf.brp_limit ?? brpLimit)) * 100;
+    return { ...t, neto: netoClamped, share };
   });
-  return rebalanceUnits(next, conf.brp_limit ?? brpLimit); // ← poravnaj na cilj iz konfiguracije
+  return normalizeShares(next); // poravnaj da zbroj bude 100%
 });
 
     setNotice(`Učitana: ${conf.name}`);
@@ -593,9 +591,12 @@ const rawValue  = types[idx].units;
 const safeValue = Math.min(rawValue, maxUnits);
 
 // postotak boje slidera
-const pct   = maxUnits > 0 ? Math.round((safeValue / maxUnits) * 100) : 0;
-const color = COLORS[idx % COLORS.length];
-const locked = !!types[idx].locked;
+const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit)); // kao admin
+const value    = i.units;
+const pct      = maxUnits > 0 ? Math.round((value / maxUnits) * 100) : 0;
+const color    = COLORS[idx % COLORS.length];
+const locked   = !!types[idx].locked;
+
             return (
               <div key={i.id} className="grid items-center gap-3" style={{gridTemplateColumns:'140px 1.1fr 4.5fr 1.2fr'}}>
                 {/* oznaka + lokot + opis */}
@@ -625,13 +626,23 @@ const locked = !!types[idx].locked;
                     NETO po stanu (m²) <span className="text-gray-400">[{minN}–{maxN}]</span>
                   </div>
                   <input
-                    className="px-3 py-2 border rounded-xl w-full"
-                    type="number"
-                    min={minN}
-                    max={maxN}
-                    value={types[idx].neto}
-                    onChange={e=>changeNeto(i.id, e.target.value)}
-                  />
+  className="w-full mt-2 h-2 rounded-full appearance-none"
+  type="range"
+  min={0}
+  max={maxUnits}
+  step={1}
+  value={value}
+  onChange={e => changeUnits(i.id, Number(e.target.value))}
+  disabled={locked}
+  style={{
+    background: `linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
+    color,
+    accentColor: color as any,
+    opacity: locked ? 0.6 : 1,
+    cursor: locked ? 'not-allowed' : 'pointer'
+  }}
+/>
+
                   <div className="text-xs text-gray-500 mt-1">BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
                 </div>
 

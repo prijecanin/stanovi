@@ -119,13 +119,13 @@ type ConfRow = {
   id: string;
   name: string;
   created_at: string;
-  project_id: string;
-  brp_limit: number | null;
-  ratio: number | null;
-  tolerance: number | null;
-  source: string | null;
-  client_key: string | null;
-  client_name: string | null;
+  project_id?: string | null;
+  brp_limit?: number | null;
+  ratio?: number | null;
+  tolerance?: number | null;
+  source?: string | null;
+  client_key?: string | null;
+  client_name?: string | null;
 };
 
 function netoRange(code: string): [number, number] {
@@ -427,7 +427,9 @@ function changeUnits(id: string, unitsIn: number) {
         .eq("id", conf.id)
         .eq("client_key", clientKey);
       if (error) throw error;
-      setConfs(prev => prev.map(x => (x.id === c.id ? { ...x, name: next } : x)));
+      setConfs(prev => prev.map(x => x.id === c.id ? { ...x, name: next } : x));  // rename
+      setConfs(prev => prev.filter(x => x.id !== c.id));                          // delete
+
     } catch (e:any) {
       setNotice(`Greška pri brisanju: ${e?.message ?? e}`);
       setTimeout(()=>setNotice(null),3500);

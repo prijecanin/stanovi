@@ -564,7 +564,9 @@ function changeUnits(id: string, unitsIn: number) {
             const [minN, maxN] = netoRange(i.code);
             const othersAchieved = calc.totalAchieved - (i.units * i.brpPerUnit);
             const maxUnits = Math.max(0, Math.floor((brpLimit - othersAchieved) / i.brpPerUnit));
-            const pct = maxUnits > 0 ? Math.round((types[idx].units / maxUnits) * 100) : 0;
+            const rawValue = types[idx].units;
+            const safeValue = Math.min(rawValue, maxUnits);               // <= NOVO
+            const pct = maxUnits > 0 ? Math.round((safeValue / maxUnits) * 100) : 0;  // <= izmjena
             const color = COLORS[idx % COLORS.length];
             const locked = !!types[idx].locked;
             return (
@@ -613,21 +615,23 @@ function changeUnits(id: string, unitsIn: number) {
                     <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(i.units)}</b></div>
                   </div>
                   <input
-                    className="w-full mt-2 h-2 rounded-full appearance-none"
-                    type="range"
-                    min={0}
-                    max={maxUnits}
-                    step={1}
-                    value={types[idx].units}
-                    onChange={e=>changeUnits(i.id, Number(e.target.value))}
-                    disabled={locked}
-                    style={{
-                      background:`linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
-                      color,
-                      opacity: locked ? 0.6 : 1,
-                      cursor: locked ? 'not-allowed' : 'pointer'
-                    }}
-                  />
+                  className="w-full mt-2 h-2 rounded-full appearance-none"
+                  type="range"
+                  min={0}
+  		  max={maxUnits}
+  		  step={1}
+  value={safeValue}                                    // <= umjesto types[idx].units
+  onChange={e=>changeUnits(i.id, Number(e.target.value))}
+  disabled={locked}
+  style={{
+    background:`linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
+    color,
+    accentColor: color as any,                         // boja thumb-a (opcionalno)
+    opacity: locked ? 0.6 : 1,
+    cursor: locked ? 'not-allowed' : 'pointer'
+  }}
+/>
+
                 </div>
 
                 {/* ukupno po tipu */}

@@ -102,11 +102,15 @@ type ConfRow = {
   id: string;
   name: string;
   created_at: string;
-  brp_limit: number;
-  ratio: number;
-  tolerance: number;
-  client_key: string; // ⭐ ako već nije tu
+  project_id: string;
+  brp_limit: number | null;
+  ratio: number | null;
+  tolerance: number | null;
+  source: string | null;
+  client_key: string | null;
+  client_name: string | null;
 };
+
 
 
 type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
@@ -423,7 +427,7 @@ function changeUnits(id: string, unitsIn: number) {
         .eq("id", conf.id)
         .eq("client_key", clientKey);
       if (error) throw error;
-      setConfs(prev => prev.filter(c => c.id !== conf.id));
+      setConfs(prev => prev.map(x => (x.id === c.id ? { ...x, name: next } : x)));
     } catch (e:any) {
       setNotice(`Greška pri brisanju: ${e?.message ?? e}`);
       setTimeout(()=>setNotice(null),3500);

@@ -203,11 +203,16 @@ export default function SharePage({ params }: { params: { id: string } }) {
           const units       = Math.max(0, Math.round(brpTarget / brpPerUnit));
           return { id: r.id, code: r.code, neto: netoClamped, units, locked:false, desc: r.description ?? defaultDesc(r.code) };
         });
+// ... poslije const initial: TypeState[] = rows.map(...)
+          const initialBalanced = rebalanceUnits(initial, proj.brp_limit ?? 12500);
+          setName(proj.name);
+          setBrpLimit(proj.brp_limit ?? 12500);
 
         if (!alive) return;
         setName(proj.name);
         setBrpLimit(proj.brp_limit ?? 12500);
-        setTypes(initial);
+        // ⬇️ umjesto setTypes(initial)
+        setTypes(initialBalanced);
       } catch (e:any) {
         if (alive) setErr(e?.message ?? String(e));
       } finally {
@@ -377,21 +382,18 @@ function changeUnits(id: string, unitsIn: number) {
     if (error) throw error;
 
     const byId = new Map(items?.map((r:any)=>[r.project_unit_type_id, r]));
-    setTypes(prev => {
-      const next = prev.map(t => {
-        const row = byId.get(t.id);
-        if (!row) return t;
-        const [minN, maxN] = netoRange(t.code);
-        const netoClamped = Math.max(minN, Math.min(maxN, Math.round(Number(row.neto_per_unit) || t.neto)));
-        return {
-          ...t,
-          neto: netoClamped,
-          units: Math.max(0, Math.round(Number(row.units) || 0))
-        };
-      });
-      // ⬇️ važan dio: vrati ukupni BRP na cilj
-      return rebalanceUnits(next, brpLimit);
-    });
+    setBrpLimit(conf.brp_limit ?? brpLimit);
+
+setTypes(prev => {
+  const next = prev.map(t => {
+    const row = byId.get(t.id);
+    if (!row) return t;
+    const [minN, maxN] = netoRange(t.code);
+    const netoClamped = Math.max(minN, Math.min(maxN, Math.round(Number(row.neto_per_unit) || t.neto)));
+    return { ...t, neto: netoClamped, units: Math.max(0, Math.round(Number(row.units) || 0)) };
+  });
+  return rebalanceUnits(next, conf.brp_limit ?? brpLimit); // ← poravnaj na cilj iz konfiguracije
+});
 
     setNotice(`Učitana: ${conf.name}`);
     setTimeout(()=>setNotice(null),2500);
@@ -577,13 +579,23 @@ async function renameConfig(c: ConfRow) {
         <div className="grid gap-3">
           {calc.items.map((i, idx) => {
             const [minN, maxN] = netoRange(i.code);
-            const othersAchieved = calc.totalAchieved - (i.units * i.brpPerUnit);
-            const maxUnits = Math.max(0, Math.floor((brpLimit - othersAchieved) / i.brpPerUnit));
-            const rawValue = types[idx].units;
-            const safeValue = Math.min(rawValue, maxUnits);               // <= NOVO
-            const pct = maxUnits > 0 ? Math.round((safeValue / maxUnits) * 100) : 0;  // <= izmjena
-            const color = COLORS[idx % COLORS.length];
-            const locked = !!types[idx].locked;
+
+// BRP ostalih tipova izravno iz stanja 'types' (stabilnije nego preko calc)
+const brpOther = types.reduce((s, t, j) => (
+  j !== idx ? s + t.units * brpPerUnit(t.neto) : s
+), 0);
+
+// maksimum koji ovaj slider realno može zauzeti
+const maxUnits = Math.max(0, Math.floor((brpLimit - brpOther) / i.brpPerUnit));
+
+// klampaj value da NIKAD ne pređe max (sprečava čudno ponašanje range-a)
+const rawValue  = types[idx].units;
+const safeValue = Math.min(rawValue, maxUnits);
+
+// postotak boje slidera
+const pct   = maxUnits > 0 ? Math.round((safeValue / maxUnits) * 100) : 0;
+const color = COLORS[idx % COLORS.length];
+const locked = !!types[idx].locked;
             return (
               <div key={i.id} className="grid items-center gap-3" style={{gridTemplateColumns:'140px 1.1fr 4.5fr 1.2fr'}}>
                 {/* oznaka + lokot + opis */}
@@ -630,18 +642,18 @@ async function renameConfig(c: ConfRow) {
                     <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(safeValue)}</b></div>
                   </div>
                   <input
-                  className="w-full mt-2 h-2 rounded-full appearance-none"
-                  type="range"
-                  min={0}
-  		  max={maxUnits}
-  		  step={1}
-  value={safeValue}                                    // <= umjesto types[idx].units
-  onChange={e=>changeUnits(i.id, Number(e.target.value))}
+  className="w-full mt-2 h-2 rounded-full appearance-none"
+  type="range"
+  min={0}
+  max={maxUnits}
+  step={1}
+  value={safeValue}
+  onChange={e => changeUnits(i.id, Number(e.target.value))}
   disabled={locked}
   style={{
-    background:`linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
+    background: `linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
     color,
-    accentColor: color as any,                         // boja thumb-a (opcionalno)
+    accentColor: color as any,
     opacity: locked ? 0.6 : 1,
     cursor: locked ? 'not-allowed' : 'pointer'
   }}

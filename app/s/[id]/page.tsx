@@ -403,49 +403,50 @@ function changeUnits(id: string, unitsIn: number) {
 
 
   async function deleteConfig(conf: ConfRow) {
-    if (!clientKey || conf.client_key !== clientKey) return;
-    if (!window.confirm("Obrisati konfiguraciju?")) return;
-    try {
-      const { error } = await supabase
-        .from("configurations")
-        .delete()
-        .eq("id", conf.id)
-        .eq("client_key", clientKey);
-      if (error) throw error;
-      setConfs(prev => prev.map(x => x.id === c.id ? { ...x, name: next } : x));  // rename
-      setConfs(prev => prev.filter(x => x.id !== c.id));                          // delete
+  if (!clientKey || conf.client_key !== clientKey) return;
+  if (!window.confirm("Obrisati konfiguraciju?")) return;
+  try {
+    const { error } = await supabase
+      .from("configurations")
+      .delete()
+      .eq("id", conf.id)
+      .eq("client_key", clientKey);
+    if (error) throw error;
 
-    } catch (e:any) {
-      setNotice(`Greška pri brisanju: ${e?.message ?? e}`);
-      setTimeout(()=>setNotice(null),3500);
-    }
+    // lokalno makni iz liste
+    setConfs(prev => prev.filter(x => x.id !== conf.id));
+
+    setNotice("Konfiguracija obrisana.");
+    setTimeout(() => setNotice(null), 2500);
+  } catch (e: any) {
+    setNotice(`Greška pri brisanju: ${e?.message ?? e}`);
+    setTimeout(() => setNotice(null), 3500);
   }
+}
 
 async function renameConfig(c: ConfRow) {
   const current = c.name || "Konfiguracija";
-  const next = window.prompt("Novi naziv konfiguracije:", current)?.trim();
-  if (!next || next === current) return;
+  const nextName = window.prompt("Novi naziv konfiguracije:", current)?.trim();
+  if (!nextName || nextName === current) return;
 
   try {
     const { error } = await supabase
       .from("configurations")
-      .update({ name: next })
-      .eq("id", c.id);
-
+      .update({ name: nextName })
+      .eq("id", c.id)
+      .eq("client_key", clientKey); // osiguraj da klijent mijenja samo svoje
     if (error) throw error;
 
     // lokalno ažuriraj prikaz
-    setConfigs(prev => prev.map(x => (x.id === c.id ? { ...x, name: next } : x)));
+    setConfs(prev => prev.map(x => (x.id === c.id ? { ...x, name: nextName } : x)));
 
-    // (opcionalno) kratka poruka korisniku
-    setNotice?.("Naziv promijenjen.");
-    setTimeout?.(() => setNotice?.(null), 2500);
+    setNotice("Naziv promijenjen.");
+    setTimeout(() => setNotice(null), 2500);
   } catch (e: any) {
-    setNotice?.(`Greška pri preimenovanju: ${e?.message ?? e}`);
-    setTimeout?.(() => setNotice?.(null), 4000);
+    setNotice(`Greška pri preimenovanju: ${e?.message ?? e}`);
+    setTimeout(() => setNotice(null), 4000);
   }
 }
-
 
   // ---- render
   if (loading) return <main className="p-4">Učitavanje…</main>;

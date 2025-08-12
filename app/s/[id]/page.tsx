@@ -136,6 +136,16 @@ function defaultDesc(code: string) {
   }
 }
 
+function netoRange(code: string): [number, number] {
+  switch (code) {
+    case '1S': return [25, 35];
+    case '2S': return [35, 55];
+    case '3S': return [55, 75];
+    case '4S': return [75, 120];
+    default:   return [20, 200]; // fallback
+  }
+}
+
 // SVG lokot
 function LockIcon({ locked, className }: { locked: boolean; className?: string }) {
   return locked ? (
@@ -219,8 +229,6 @@ setBrpLimit(proj.brp_limit ?? 12500);
 if (!alive) return;
 setTypes(initialNormalized);
 
-        // ⬇️ umjesto setTypes(initial)
-        setTypes(initialBalanced);
       } catch (e:any) {
         if (alive) setErr(e?.message ?? String(e));
       } finally {
@@ -578,8 +586,8 @@ async function renameConfig(c: ConfRow) {
           {calc.items.map((i, idx) => {
             const [minN, maxN] = netoRange(i.code);
 
-const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit)); // ADMIN logika
-const value    = i.units;                                           // broj stanova iz base
+const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit)); // admin logika
+const value    = i.units;
 const pct      = maxUnits > 0 ? Math.round((value / maxUnits) * 100) : 0;
 const color    = COLORS[idx % COLORS.length];
 const locked   = !!types[idx].locked;
@@ -608,30 +616,16 @@ const locked   = !!types[idx].locked;
                 </div>
 
                 {/* NETO */}
-                <div>
-                  <div className="text-xs text-gray-500 mb-1">
-                    NETO po stanu (m²) <span className="text-gray-400">[{minN}–{maxN}]</span>
-                  </div>
-                  <input
-  className="w-full mt-2 h-2 rounded-full appearance-none"
-  type="range"
-  min={0}
-  max={maxUnits}
+                <input
+  className="px-3 py-2 border rounded-xl w-full"
+  type="number"
+  min={minN}
+  max={maxN}
   step={1}
-  value={value}
-  onChange={e => changeUnits(i.id, Number(e.target.value))}
-  disabled={locked}
-  style={{
-    background: `linear-gradient(to right, ${color} ${pct}%, #e5e7eb ${pct}%)`,
-    color,
-    accentColor: color as any,
-    opacity: locked ? 0.6 : 1,
-    cursor: locked ? 'not-allowed' : 'pointer'
-  }}
+  value={types[idx].neto}
+  onChange={e => changeNeto(i.id, e.target.value)}
 />
-
-                  <div className="text-xs text-gray-500 mt-1">BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
-                </div>
+<div className="text-xs text-gray-500 mt-1">BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
 
                 {/* slider BROJ STANOVA */}
                 <div>
@@ -654,7 +648,6 @@ const locked   = !!types[idx].locked;
     accentColor: color as any
   }}
 />
-
                 </div>
 
                 {/* ukupno po tipu */}

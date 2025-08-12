@@ -22,35 +22,31 @@ function totalAchieved(list: {units:number; neto:number}[]) {
  * - 'pinnedId' je tip koji je upravo promijenjen (njega ne skaliramo).
  * - zaključane tipove ne diramo.
  */
-function rebalanceUnits(
-  arr: {id:string; neto:number; units:number; locked?:boolean}[],
+// umjesto dosadašnje verzije:
+function rebalanceUnits<T extends { id: string; neto: number; units: number; locked?: boolean }>(
+  arr: T[],
   brpLimit: number,
   pinnedId?: string
-) {
-  // snapshot s brpPerUnit
-  const items = arr.map(t => ({ ...t, bpu: brpPerUnit(t.neto) }));
-  const isLocked = (t:any) => !!t.locked;
+): T[] {
+  const items = arr.map(t => ({ ...t, bpu: Math.max(1, Math.round((t.neto || 0) / RATIO)) }));
+  const isLocked = (t: any) => !!t.locked;
 
   const pinned = pinnedId ? items.find(t => t.id === pinnedId) : undefined;
-  const lockedSum = items.filter(isLocked).reduce((s,t)=>s + t.units*t.bpu, 0);
+  const lockedSum = items.filter(isLocked).reduce((s, t) => s + t.units * t.bpu, 0);
   const pinnedSum = pinned ? pinned.units * pinned.bpu : 0;
 
   const free = items.filter(t => !isLocked(t) && t.id !== pinnedId);
-  const freeSum = free.reduce((s,t)=>s + t.units*t.bpu, 0);
-
-  // BRP koji slobodni tipovi trebaju "pokriti"
+  const freeSum = free.reduce((s, t) => s + t.units * t.bpu, 0);
   const targetFree = Math.max(0, brpLimit - lockedSum - pinnedSum);
 
-  // skaliranje slobodnih
-  let nextUnits = new Map<string, number>(items.map(t => [t.id, t.units]));
+  const nextUnits = new Map<string, number>(items.map(t => [t.id, t.units]));
   if (free.length > 0) {
     if (freeSum > 0) {
       const factor = targetFree / freeSum;
       free.forEach(t => nextUnits.set(t.id, Math.max(0, Math.round(t.units * factor))));
     } else {
-      // ako su svi free=0, dodaj po jedan dok ne potrošimo target
       let left = targetFree;
-      const sorted = [...free].sort((a,b)=>a.bpu - b.bpu);
+      const sorted = [...free].sort((a, b) => a.bpu - b.bpu);
       outer: while (left >= (sorted[0]?.bpu ?? Infinity)) {
         for (const t of sorted) {
           if (left >= t.bpu) {
@@ -63,13 +59,12 @@ function rebalanceUnits(
     }
   }
 
-  // fina korekcija da pogodimo cilj što bolje
-  const achieved = items.reduce((s,t)=>s + (nextUnits.get(t.id) || 0) * t.bpu, 0);
+  // fina korekcija
+  const achieved = items.reduce((s, t) => s + (nextUnits.get(t.id) || 0) * t.bpu, 0);
   let diff = brpLimit - achieved;
   if (free.length > 0 && diff !== 0) {
     if (diff > 0) {
-      // dodaj stanove najjeftinijim free tipovima dok možemo
-      const asc = [...free].sort((a,b)=>a.bpu - b.bpu);
+      const asc = [...free].sort((a, b) => a.bpu - b.bpu);
       let guard = 10000;
       while (diff >= asc[0].bpu && guard--) {
         for (const t of asc) {
@@ -81,8 +76,7 @@ function rebalanceUnits(
         }
       }
     } else {
-      // smanji stanove s najskupljih free tipova
-      const desc = [...free].sort((a,b)=>b.bpu - a.bpu);
+      const desc = [...free].sort((a, b) => b.bpu - a.bpu);
       let guard = 10000;
       while (diff < 0 && guard--) {
         let changed = false;
@@ -95,13 +89,15 @@ function rebalanceUnits(
             if (diff >= 0) break;
           }
         }
-        if (!changed) break; // nema što više smanjiti
+        if (!changed) break;
       }
     }
   }
 
+  // ⬅️ vratimo ISTE objekte, samo s novim units
   return arr.map(t => ({ ...t, units: Math.max(0, nextUnits.get(t.id) || 0) }));
 }
+
 
 
 type TypeState = { id:string; code:string; neto:number; units:number; locked?: boolean; desc?: string };
@@ -260,14 +256,14 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
   // promjene
   function changeNeto(id: string, raw: string) {
-  setTypes(prev => {
-    const t = prev.find(x => x.id===id);
-    if (!t) return prev;
-    const [minN, maxN] = netoRange(t.code);
-    const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw)||t.neto)));
-    const next = prev.map(x => x.id===id ? { ...x, neto: n } : x);
-    return rebalanceUnits(next, brpLimit, id);
-  });
+setTypes(prev => {
+  const t = prev.find(x => x.id===id)!;
+  const [minN,maxN] = netoRange(t.code);
+  const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw) || t.neto)));
+  const next = prev.map(x => x.id===id ? ({ ...x, neto: n }) : x);
+  return rebalanceUnits(next, brpLimit, id);   // ✔ ovo sada vraća TypeState[]
+});
+
 }
 
 function changeUnits(id: string, unitsIn: number) {

@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  @apply bg-gray-50;
+}
+
+.card {
+  @apply bg-white border border-gray-200 rounded-2xl p-4;
+}
+
+/* Range base */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 8px;
+  border-radius: 9999px;
+  background: #e5e7eb; /* fallback, preko ovoga stavljamo inline gradient */
+  outline: none;
+}
+
+/* Track (Chrome/Safari) */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: transparent; /* gradient dolazi sa inline style */
+}
+
+/* Thumb (Chrome/Safari/Edge) */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid currentColor; /* obrub u boji tipa */
+  box-shadow: 0 0 0 1px rgba(0,0,0,.06);
+  margin-top: -4px; /* da thumb bude vertikalno centriran na 8px traci */
+}
+
+/* Firefox track */
+input[type="range"]::-moz-range-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+/* Firefox thumb */
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid currentColor;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.06);
+}
+
+input[type="range"]{ -webkit-appearance:none; appearance:none; height:8px; border-radius:9999px; background:#e5e7eb; outline:none; }
+input[type="range"]::-webkit-slider-runnable-track{ height:8px; border-radius:9999px; background:transparent; }
+input[type="range"]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:9999px; background:#fff; border:3px solid currentColor; box-shadow:0 0 0 1px rgba(0,0,0,.06); margin-top:-4px; }
+input[type="range"]::-moz-range-track{ height:8px; border-radius:9999px; background:transparent; }
+input[type="range"]::-moz-range-thumb{ width:16px; height:16px; border-radius:9999px; background:#fff; border:3px solid currentColor; box-shadow:0 0 0 1px rgba(0,0,0,.06); }

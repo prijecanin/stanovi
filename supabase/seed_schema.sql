@@ -1,0 +1,1 @@
+-- Full schema will be provided in the next guided step.

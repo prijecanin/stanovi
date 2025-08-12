@@ -375,46 +375,38 @@ function changeUnits(id: string, unitsIn: number) {
   }
 
   async function loadConfig(conf: ConfRow) {
-    try {
-      const { data: items, error } = await supabase
-        .from("configuration_items")
-        .select("project_unit_type_id, units, neto_per_unit")
-        .eq("configuration_id", conf.id);
-      if (error) throw error;
+  try {
+    const { data: items, error } = await supabase
+      .from("configuration_items")
+      .select("project_unit_type_id, units, neto_per_unit")
+      .eq("configuration_id", conf.id);
+    if (error) throw error;
 
-      const byId = new Map(items?.map((r:any)=>[r.project_unit_type_id, r]));
-      setTypes(prev => prev.map(t => {
+    const byId = new Map(items?.map((r:any)=>[r.project_unit_type_id, r]));
+    setTypes(prev => {
+      const next = prev.map(t => {
         const row = byId.get(t.id);
         if (!row) return t;
         const [minN, maxN] = netoRange(t.code);
         const netoClamped = Math.max(minN, Math.min(maxN, Math.round(Number(row.neto_per_unit) || t.neto)));
-        return { ...t, neto: netoClamped, units: Math.max(0, Math.round(Number(row.units)||0)) };
-      }));
-      setNotice(`Učitana: ${conf.name}`);
-      setTimeout(()=>setNotice(null),2500);
-    } catch (e:any) {
-      setNotice(`Greška pri učitavanju: ${e?.message ?? e}`);
-      setTimeout(()=>setNotice(null),3500);
-    }
-  }
+        return {
+          ...t,
+          neto: netoClamped,
+          units: Math.max(0, Math.round(Number(row.units) || 0))
+        };
+      });
+      // ⬇️ važan dio: vrati ukupni BRP na cilj
+      return rebalanceUnits(next, brpLimit);
+    });
 
-  async function renameConfig(conf: ConfRow) {
-    if (!clientKey || conf.client_key !== clientKey) return;
-    const nn = window.prompt("Novi naziv konfiguracije:", conf.name);
-    if (!nn || nn === conf.name) return;
-    try {
-      const { error } = await supabase
-        .from("configurations")
-        .update({ name: nn })
-        .eq("id", conf.id)
-        .eq("client_key", clientKey);
-      if (error) throw error;
-      setConfs(prev => prev.map(c => c.id===conf.id ? { ...c, name: nn } : c));
-    } catch (e:any) {
-      setNotice(`Greška pri preimenovanju: ${e?.message ?? e}`);
-      setTimeout(()=>setNotice(null),3500);
-    }
+    setNotice(`Učitana: ${conf.name}`);
+    setTimeout(()=>setNotice(null),2500);
+  } catch (e:any) {
+    setNotice(`Greška pri učitavanju: ${e?.message ?? e}`);
+    setTimeout(()=>setNotice(null),3500);
   }
+}
+
 
   async function deleteConfig(conf: ConfRow) {
     if (!clientKey || conf.client_key !== clientKey) return;
@@ -612,7 +604,7 @@ function changeUnits(id: string, unitsIn: number) {
                 <div>
                   <div className="flex items-baseline justify-between">
                     <div className="text-xs text-gray-500">Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b></div>
-                    <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(i.units)}</b></div>
+                    <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(safeValue)}</b></div>
                   </div>
                   <input
                   className="w-full mt-2 h-2 rounded-full appearance-none"

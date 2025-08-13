@@ -93,30 +93,30 @@ export default function SharePage({ params }: { params: { id: string } }) {
   const [canEdit, setCanEdit] = useState(false);
   const [token, setToken] = useState<string | null>(null);
 
-  useEffect(() => {
-    // pročitaj token iz URL-a
-    const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
-    const t = url?.searchParams.get("t");
-    if (!t) { setToken(null); setCanEdit(false); return; }
-    setToken(t);
+useEffect(() => {
+  // pročitaj token iz URL-a
+  const url = typeof window !== "undefined" ? new URL(window.location.href) : null;
+  const t = url?.searchParams.get("t");
+  if (!t) { setToken(null); setCanEdit(false); return; }
+  setToken(t);
 
-    // provjeri na serveru
-    (async () => {
-      try {
-        const res = await fetch(`/api/check-token?t=${encodeURIComponent(t)}`);
-        const j = await res.json();
-        // mora biti validan, isti project i scope === 'edit'
-        if (j?.valid && j?.scope === "edit" && j?.projectId === params.id) {
-          setCanEdit(true);
-        } else {
-          setCanEdit(false);
-        }
-      } catch {
+  // provjeri na serveru
+  (async () => {
+    try {
+      const res = await fetch(`/api/check-token?t=${encodeURIComponent(t)}`);
+      const j = await res.json();
+      // mora biti validan, isti project i scope === 'edit'
+      if (j?.valid && j?.scope === "edit" && j?.projectId === params.id) {
+        setCanEdit(true);
+      } else {
         setCanEdit(false);
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id]);
+    } catch {
+      setCanEdit(false);
+    }
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [params.id]);
 
   // tooltip za 3. lock
   const [lockTipId, setLockTipId] = useState<string|null>(null);
@@ -221,7 +221,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
   /* --- promjene --- */
   function changeUnits(id: string, unitsIn: number, allowedMax?: number) {
-    if (!canEdit) return; // guard u read-only modu
     const desired = Math.max(0, Math.round(Number(unitsIn) || 0));
     const cap = (typeof allowedMax === 'number') ? Math.max(0, Math.floor(allowedMax)) : desired;
     const targetUnits = Math.min(desired, cap);
@@ -239,7 +238,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
     });
   }
   function changeNetoStep(id: string, delta: number) {
-    if (!canEdit) return; // guard
     setTypes(prev => {
       const t = prev.find(x => x.id===id);
       if (!t) return prev;
@@ -278,57 +276,52 @@ export default function SharePage({ params }: { params: { id: string } }) {
   }
 
   /* --- klijent konfiguracije (save/load/rename/delete) --- */
+  async function saveClientConfig() {
+    try {
+      const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
+      const confName = window.prompt("Naziv konfiguracije:", defaultName);
+      if (!confName) return;
 
-async function saveClientConfig() {
-  if (!canEdit || !token) { 
-    setNotice("Read-only link – spremanje nije dozvoljeno.");
-    setTimeout(()=>setNotice(null),3000);
-    return;
-  }
-  try {
-    const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
-    const confName = window.prompt("Naziv konfiguracije:", defaultName);
-    if (!confName) return;
+      localStorage.setItem('client_name', clientName || '');
 
-    localStorage.setItem('client_name', clientName || '');
+      setSaving(true); setNotice(null);
 
-    setSaving(true); setNotice(null);
+      const { data: conf, error: e1 } = await supabase
+        .from("configurations")
+        .insert({
+          project_id: projectId,
+          name: confName,
+          brp_limit: brpLimit,
+          ratio: RATIO,
+          tolerance: 50,
+          source: 'client',
+          client_key: clientKey || null,
+          client_name: clientName || null
+        })
+        .select("id, name, created_at, project_id, brp_limit, ratio, tolerance, source, client_key, client_name")
+        .single();
+      if (e1) throw e1;
 
-    const body = {
-      projectId,
-      name: confName,
-      brpLimit,
-      clientKey,
-      clientName,
-      items: calc.items.map(i => ({
+      const itemsPayload = calc.items.map(i => ({
+        configuration_id: conf.id,
         project_unit_type_id: i.id,
-        share: i.share,
+        share: Math.round((i.share||0)*100)/100,
         units: i.units,
         neto_per_unit: i.netoPerUnit,
-        brp_per_unit: i.brpPerUnit,
-      }))
-    };
+        brp_per_unit: i.brpPerUnit
+      }));
+      const { error: e2 } = await supabase.from("configuration_items").insert(itemsPayload);
+      if (e2) throw e2;
 
-    const res = await fetch(`/api/save?t=${encodeURIComponent(token)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.error || "Greška pri spremanju");
-
-    setNotice("Konfiguracija spremljena.");
-    await fetchConfs(); // osvježi listu
-  } catch (e:any) {
-    setNotice(`Greška pri spremanju: ${e?.message ?? e}`);
-  } finally {
-    setSaving(false);
-    setTimeout(()=>setNotice(null),3500);
+      setNotice("Konfiguracija spremljena.");
+      await fetchConfs();
+    } catch (e:any) {
+      setNotice(`Greška pri spremanju: ${e?.message ?? e}`);
+    } finally {
+      setSaving(false);
+      setTimeout(()=>setNotice(null),3500);
+    }
   }
-}
-
-  
-
   async function loadConfig(conf: ConfRow) {
     try {
       const { data: items, error } = await supabase
@@ -361,7 +354,6 @@ async function saveClientConfig() {
     }
   }
   async function deleteConfig(conf: ConfRow) {
-    if (!canEdit) { setNotice("Read-only link – brisanje nije dozvoljeno."); setTimeout(()=>setNotice(null),3000); return; }
     if (!clientKey || conf.client_key !== clientKey) return;
     if (!window.confirm("Obrisati konfiguraciju?")) return;
     try {
@@ -381,7 +373,6 @@ async function saveClientConfig() {
     }
   }
   async function renameConfig(c: ConfRow) {
-    if (!canEdit) { setNotice("Read-only link – preimenovanje nije dozvoljeno."); setTimeout(()=>setNotice(null),3000); return; }
     const current = c.name || "Konfiguracija";
     const nextName = window.prompt("Novi naziv konfiguracije:", current)?.trim();
     if (!nextName || nextName === current) return;
@@ -414,11 +405,6 @@ async function saveClientConfig() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div className="flex flex-col md:flex-row md:items-end gap-3 md:gap-4">
           <h2 className="text-xl font-semibold leading-none">{name}</h2>
-          {!canEdit && (
-            <span className="text-xs px-2 py-1 rounded-md bg-gray-100 text-gray-600">
-              Read‑only link
-            </span>
-          )}
         </div>
 
         {/* Desktop: akcije gore desno */}
@@ -428,9 +414,8 @@ async function saveClientConfig() {
           <button onClick={exportXLS} className="px-3 py-2 rounded-xl border">Preuzmi XLS</button>
           <button
             onClick={saveClientConfig}
-            disabled={saving || !canEdit}
-            title={!canEdit ? "Read-only link – spremanje nije dozvoljeno." : "Spremi moju konfiguraciju"}
-            className={`px-3 py-2 rounded-xl text-white ${saving||!canEdit?"bg-gray-400 cursor-not-allowed":"bg-black hover:opacity-90"}`}
+            disabled={saving}
+            className={`px-3 py-2 rounded-xl text-white ${saving?"bg-gray-400":"bg-black hover:opacity-90"}`}
           >
             {saving ? "Spremam…" : "Spremi moju konfiguraciju"}
           </button>
@@ -467,17 +452,15 @@ async function saveClientConfig() {
                     <button onClick={()=>loadConfig(c)} className="px-3 py-1 rounded-lg border hover:bg-gray-50">Učitaj</button>
                     <button
                       onClick={()=>mine && renameConfig(c)}
-                      disabled={!mine || !canEdit}
-                      title={!canEdit ? "Read-only link – preimenovanje nije dozvoljeno." : (mine ? "" : "Samo autor može preimenovati")}
-                      className={`px-3 py-1 rounded-lg border ${(mine && canEdit)?'hover:bg-gray-50':'opacity-50 cursor-not-allowed'}`}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border ${mine?'hover:bg-gray-50':'opacity-50 cursor-not-allowed'}`}
                     >
                       Preimenuj
                     </button>
                     <button
                       onClick={()=>mine && deleteConfig(c)}
-                      disabled={!mine || !canEdit}
-                      title={!canEdit ? "Read-only link – brisanje nije dozvoljeno." : (mine ? "" : "Samo autor može brisati")}
-                      className={`px-3 py-1 rounded-lg border bg-red-600 text-white ${(mine && canEdit)?'hover:opacity-90':'opacity-50 cursor-not-allowed'}`}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border bg-red-600 text-white ${mine?'hover:opacity-90':'opacity-50 cursor-not-allowed'}`}
                     >
                       Obriši
                     </button>
@@ -564,7 +547,6 @@ async function saveClientConfig() {
 
             // Najviše 2 zaključana
             const toggleLock = () => {
-              if (!canEdit) return; // guard
               setTypes(prev => {
                 const curr = prev.find(x=>x.id===t.id);
                 if (!curr) return prev;
@@ -590,7 +572,6 @@ async function saveClientConfig() {
                       onClick={toggleLock}
                       className={`p-1 rounded-md border ${t.locked?'bg-red-50 text-red-600':'bg-gray-50 text-gray-600'}`}
                       title={t.locked?'Otključaj broj stanova':'Zaključaj broj stanova'}
-                      disabled={!canEdit}
                     >
                       <LockIcon locked={!!t.locked} className="w-4 h-4" />
                     </button>
@@ -612,7 +593,6 @@ async function saveClientConfig() {
                         onClick={()=>changeNetoStep(t.id, -1)}
                         className="px-2 py-1 rounded-md border"
                         aria-label="Smanji NETO"
-                        disabled={!canEdit}
                       >−</button>
                       <div className="px-3 py-1 rounded-md border min-w-[52px] text-center font-medium tabular-nums">
                         {fmt0(t.neto)}
@@ -621,7 +601,6 @@ async function saveClientConfig() {
                         onClick={()=>changeNetoStep(t.id, +1)}
                         className="px-2 py-1 rounded-md border"
                         aria-label="Povećaj NETO"
-                        disabled={!canEdit}
                       >+</button>
                     </div>
                     <div className="text-[11px] text-gray-500">
@@ -650,7 +629,7 @@ async function saveClientConfig() {
                     onChange={(e)=>changeUnits(t.id, Number(e.target.value), allowedMax)}
                     style={sliderStyle}
                     aria-label="Broj stanova"
-                    disabled={!canEdit || !!t.locked}
+                    disabled={t.locked}
                   />
                   <div className="sr-only">Maksimalno: {fmt0(allowedMax)} stanova</div>
                 </div>
@@ -682,9 +661,8 @@ async function saveClientConfig() {
           <button onClick={exportXLS} className="px-3 py-2 rounded-xl border w-full">Preuzmi XLS</button>
           <button
             onClick={saveClientConfig}
-            disabled={saving || !canEdit}
-            title={!canEdit ? "Read-only link – spremanje nije dozvoljeno." : "Spremi moju konfiguraciju"}
-            className={`px-3 py-2 rounded-xl text-white w-full ${(saving||!canEdit)?"bg-gray-400 cursor-not-allowed":"bg-black hover:opacity-90"}`}
+            disabled={saving}
+            className={`px-3 py-2 rounded-xl text-white w-full ${saving?"bg-gray-400":"bg-black hover:opacity-90"}`}
           >
             {saving ? "Spremam…" : "Spremi moju konfiguraciju"}
           </button>
@@ -715,17 +693,15 @@ async function saveClientConfig() {
                     <button onClick={()=>loadConfig(c)} className="px-3 py-1 rounded-lg border hover:bg-gray-50">Učitaj</button>
                     <button
                       onClick={()=>mine && renameConfig(c)}
-                      disabled={!mine || !canEdit}
-                      title={!canEdit ? "Read-only link – preimenovanje nije dozvoljeno." : (mine ? "" : "Samo autor može preimenovati")}
-                      className={`px-3 py-1 rounded-lg border ${(mine && canEdit)?'hover:bg-gray-50':'opacity-50 cursor-not-allowed'}`}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border ${mine?'hover:bg-gray-50':'opacity-50 cursor-not-allowed'}`}
                     >
                       Preimenuj
                     </button>
                     <button
                       onClick={()=>mine && deleteConfig(c)}
-                      disabled={!mine || !canEdit}
-                      title={!canEdit ? "Read-only link – brisanje nije dozvoljeno." : (mine ? "" : "Samo autor može brisati")}
-                      className={`px-3 py-1 rounded-lg border bg-red-600 text-white ${(mine && canEdit)?'hover:opacity-90':'opacity-50 cursor-not-allowed'}`}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border bg-red-600 text-white ${mine?'hover:opacity-90':'opacity-50 cursor-not-allowed'}`}
                     >
                       Obriši
                     </button>

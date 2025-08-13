@@ -89,7 +89,7 @@ type UpsertTypeRow = {
   idx?: number | null;
 };
 
-export async function upsertUnitTypes(_: any, formData: FormData) {
+const upsertUnitTypes = async (_: any, formData: FormData) => {
   "use server";
   try {
     const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -156,7 +156,7 @@ export async function upsertUnitTypes(_: any, formData: FormData) {
   }
 }
 
-export async function deleteUnitType(_: any, formData: FormData) {
+const deleteUnitType = async (_: any, formData: FormData) => {
   "use server";
   try {
     const SUPABASE_URL = process.env.SUPABASE_URL!;

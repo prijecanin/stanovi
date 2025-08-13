@@ -490,7 +490,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
-      {/* TIPOVI — mobile-first layout, šareni slideri */}
+      {/* TIPOVI — mobile-first; na desktopu smanjeni lijevi stupac + šareni slideri */}
       <section className="card">
         <h3 className="font-semibold mb-2">Struktura po tipu</h3>
         <div className="grid gap-6">
@@ -499,16 +499,27 @@ export default function SharePage({ params }: { params: { id: string } }) {
             const [minN, maxN] = netoRange(t.code);
             const color = COLORS[idx % COLORS.length];
 
-            // maksimum dozvoljen na temelju preostalog BRP-a + zaključavanja
+            // max broj stanova uz uvažavanje zaključanih
             const brpLocked = calc.items.filter((x,k)=>k!==idx && x.locked)
               .reduce((s,x)=>s + x.units * x.brpPerUnit, 0);
             const brpFree = Math.max(0, brpLimit - brpLocked);
             const maxUnits = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
 
+            // za obojanu traku (radi i kad accent-color nije dovoljan)
+            const fillPct = maxUnits > 0 ? Math.round((i.units / maxUnits) * 100) : 0;
+            const sliderStyle: React.CSSProperties = {
+              accentColor: color,
+              background: `linear-gradient(to right, ${color} ${fillPct}%, #e5e7eb ${fillPct}%)`,
+              WebkitAppearance: 'none',
+              height: '6px',
+              borderRadius: '9999px'
+            };
+
             return (
-              <div key={t.id} className="grid gap-3 md:grid-cols-12 md:items-center">
+              // desktop grid: lijevi stupac max 560px, desni zauzima ostatak → slider je bliže
+              <div key={t.id} className="grid gap-4 md:grid-cols-[minmax(340px,560px)_1fr] md:items-center">
                 {/* Lijevi blok: oznaka + opis + NETO kontrola */}
-                <div className="md:col-span-6">
+                <div>
                   <div className="flex items-center gap-3">
                     <div className="text-lg font-bold w-10">{t.code}</div>
                     <button
@@ -546,7 +557,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                 </div>
 
                 {/* Desni blok: slider udjela (broj stanova) */}
-                <div className="md:col-span-6">
+                <div>
                   <div className="flex items-baseline justify-between">
                     <div className="text-xs text-gray-500">
                       Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b>
@@ -563,13 +574,14 @@ export default function SharePage({ params }: { params: { id: string } }) {
                     step={1}
                     value={i.units}
                     onChange={(e)=>changeUnits(t.id, Number(e.target.value))}
-                    style={{ accentColor: color }}
+                    style={sliderStyle}
                     aria-label="Broj stanova"
                   />
+                  <div className="sr-only">Maksimalno: {fmt0(maxUnits)} stanova</div>
                 </div>
 
                 {/* Neto/Brp ukupno */}
-                <div className="md:col-span-12 grid grid-cols-2 gap-3 text-xs text-slate-700">
+                <div className="md:col-span-2 grid grid-cols-2 gap-3 text-xs text-slate-700">
                   <div>NETO: <b>{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
                   <div>BRP: <b>{fmt0(i.achievedBrp)}</b> m²</div>
                 </div>

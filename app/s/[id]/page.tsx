@@ -89,6 +89,9 @@ export default function SharePage({ params }: { params: { id: string } }) {
   const [notice, setNotice] = useState<string|null>(null);
   const [saving, setSaving] = useState(false);
 
+  // tooltip za 3. lock
+  const [lockTipId, setLockTipId] = useState<string|null>(null);
+
   /* --- client key/name --- */
   useEffect(() => {
     let key = localStorage.getItem('client_key');
@@ -188,8 +191,11 @@ export default function SharePage({ params }: { params: { id: string } }) {
   }, [types, brpLimit]);
 
   /* --- promjene --- */
-  function changeUnits(id: string, unitsIn: number) {
-    const targetUnits = Math.max(0, Math.round(Number(unitsIn) || 0));
+  function changeUnits(id: string, unitsIn: number, allowedMax?: number) {
+    const desired = Math.max(0, Math.round(Number(unitsIn) || 0));
+    const cap = (typeof allowedMax === 'number') ? Math.max(0, Math.floor(allowedMax)) : desired;
+    const targetUnits = Math.min(desired, cap);
+
     setTypes(prev => {
       const t = prev.find(x => x.id === id);
       if (!t) return prev;
@@ -211,10 +217,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
       return prev.map(x => x.id===id ? { ...x, neto: next } : x);
     });
   }
-
-  /* --- NEMA automatskog clampanja na promjenu lockova --- */
-  // (Namjerno uklonjeno: zaključavanje samo „zamrzne” vrijednosti; ništa se
-  // ne pomiče dok korisnik ručno ne povuče neki slider.)
 
   /* --- XLS export --- */
   async function exportXLS() {
@@ -503,15 +505,13 @@ export default function SharePage({ params }: { params: { id: string } }) {
             const [minN, maxN] = netoRange(t.code);
             const color = COLORS[idx % COLORS.length];
 
-            // BRP zaključanih drugih tipova
+            // BRP zaključanih drugih tipova (stvarna ograničenja)
             const brpLocked = calc.items.filter((x,k)=>k!==idx && x.locked)
               .reduce((s,x)=>s + x.units * x.brpPerUnit, 0);
-            const brpFree = Math.max(0, brpLimit - brpLocked);
+            const allowedMax = Math.max(0, Math.floor((brpLimit - brpLocked) / i.brpPerUnit));
 
-            // dopušten maksimum: ne smiješ povećati preko ovoga,
-            // ali slider NEĆE „skočiti” jer max ≥ trenutna vrijednost
-            const allowedMax = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
-            const visualMax  = Math.max(i.units, allowedMax);
+            // VIZUALNI MAKSIMUM JE STALAN (da se ništa ne miče kod lock/unlock)
+            const visualMax = Math.max(i.units, Math.floor(brpLimit / i.brpPerUnit));
 
             // obojana traka (fallback uz accent-color)
             const fillPct = visualMax > 0 ? Math.round((i.units / visualMax) * 100) : 0;
@@ -532,8 +532,8 @@ export default function SharePage({ params }: { params: { id: string } }) {
                 if (!curr.locked) {
                   const lockedCount = prev.filter(x=>x.locked).length;
                   if (lockedCount >= 2) {
-                    setNotice('Možeš zaključati najviše 2 tipa. Otključaj jedan pa pokušaj ponovno.');
-                    setTimeout(()=>setNotice(null),3000);
+                    setLockTipId(t.id);
+                    setTimeout(()=>setLockTipId(null), 2000);
                     return prev; // blokiraj
                   }
                 }
@@ -544,7 +544,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
             return (
               <div key={t.id} className="grid gap-4 md:grid-cols-[minmax(360px,560px)_1fr] md:items-center">
                 {/* Lijevi blok: oznaka + opis + NETO kontrola */}
-                <div>
+                <div className="relative">
                   <div className="flex items-center gap-3">
                     <div className="text-lg font-bold w-10">{t.code}</div>
                     <button
@@ -554,6 +554,13 @@ export default function SharePage({ params }: { params: { id: string } }) {
                     >
                       <LockIcon locked={!!t.locked} className="w-4 h-4" />
                     </button>
+
+                    {/* Tooltip za 3. lock */}
+                    {lockTipId === t.id && (
+                      <div className="absolute left-10 top-[-6px] z-10 bg-black text-white text-[11px] px-2 py-1 rounded-md shadow">
+                        Maksimalno 2 zaključana tipa
+                      </div>
+                    )}
                   </div>
                   <div className="text-xs text-gray-500 mb-2">{t.desc || defaultDesc(t.code)}</div>
 
@@ -598,7 +605,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                     max={visualMax}
                     step={1}
                     value={i.units}
-                    onChange={(e)=>changeUnits(t.id, Number(e.target.value))}
+                    onChange={(e)=>changeUnits(t.id, Number(e.target.value), allowedMax)}
                     style={sliderStyle}
                     aria-label="Broj stanova"
                     disabled={t.locked}

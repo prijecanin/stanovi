@@ -490,7 +490,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
-      {/* TIPOVI — mobile-first; na desktopu smanjeni lijevi stupac + šareni slideri */}
+      {/* TIPOVI — mobile-first; na desktopu poravnanje preko istog 2-col grida */}
       <section className="card">
         <h3 className="font-semibold mb-2">Struktura po tipu</h3>
         <div className="grid gap-6">
@@ -505,7 +505,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
             const brpFree = Math.max(0, brpLimit - brpLocked);
             const maxUnits = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
 
-            // za obojanu traku (radi i kad accent-color nije dovoljan)
+            // obojana traka (fallback uz accent-color)
             const fillPct = maxUnits > 0 ? Math.round((i.units / maxUnits) * 100) : 0;
             const sliderStyle: React.CSSProperties = {
               accentColor: color,
@@ -516,8 +516,8 @@ export default function SharePage({ params }: { params: { id: string } }) {
             };
 
             return (
-              // desktop grid: lijevi stupac max 560px, desni zauzima ostatak → slider je bliže
-              <div key={t.id} className="grid gap-4 md:grid-cols-[minmax(340px,560px)_1fr] md:items-center">
+              /* desktop: 2 stupca → lijevo info, desno slider; NETO i BRP su zasebni grid-itemi (3. i 4.) pa se poravnaju */
+              <div key={t.id} className="grid gap-4 md:grid-cols-[minmax(360px,560px)_1fr] md:items-center">
                 {/* Lijevi blok: oznaka + opis + NETO kontrola */}
                 <div>
                   <div className="flex items-center gap-3">
@@ -541,7 +541,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                         className="px-2 py-1 rounded-md border"
                         aria-label="Smanji NETO"
                       >−</button>
-                      <div className="px-3 py-1 rounded-md border min-w-[52px] text-center font-medium">
+                      <div className="px-3 py-1 rounded-md border min-w-[52px] text-center font-medium tabular-nums">
                         {fmt0(t.neto)}
                       </div>
                       <button
@@ -563,7 +563,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                       Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b>
                     </div>
                     <div className="text-xs text-slate-700">
-                      Broj stanova: <b>{fmt0(i.units)}</b>
+                      Broj stanova: <b className="tabular-nums">{fmt0(i.units)}</b>
                     </div>
                   </div>
                   <input
@@ -580,10 +580,18 @@ export default function SharePage({ params }: { params: { id: string } }) {
                   <div className="sr-only">Maksimalno: {fmt0(maxUnits)} stanova</div>
                 </div>
 
-                {/* Neto/Brp ukupno */}
-                <div className="md:col-span-2 grid grid-cols-2 gap-3 text-xs text-slate-700">
-                  <div>NETO: <b>{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
-                  <div>BRP: <b>{fmt0(i.achievedBrp)}</b> m²</div>
+                {/* --- SUMARNI RED --- */}
+                {/* mobitel: jedan red s dvije kolone */}
+                <div className="md:hidden grid grid-cols-2 gap-3 text-xs text-slate-700 mt-1">
+                  <div>NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
+                  <div className="text-right">BRP: <b className="tabular-nums">{fmt0(i.achievedBrp)}</b> m²</div>
+                </div>
+                {/* desktop: dva odvojena itema poravnata ispod odgovarajućih stupaca */}
+                <div className="hidden md:block text-xs text-slate-700">
+                  NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * i.units)}</b> m²
+                </div>
+                <div className="hidden md:block text-xs text-slate-700 text-right">
+                  BRP: <b className="tabular-nums">{fmt0(i.achievedBrp)}</b> m²
                 </div>
               </div>
             );

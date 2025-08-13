@@ -212,35 +212,9 @@ export default function SharePage({ params }: { params: { id: string } }) {
     });
   }
 
-  /* --- AUTO-CLAMP: kad se promijene lockovi/BRP, prikroji “prevelike” ne–lockane tipove --- */
-  useEffect(() => {
-    // izračunaj nova shares ako neki ne-lockani tip prelazi svoj maxUnits
-    let changed = false;
-    const next = types.map((t, idx) => {
-      let share = t.share;
-      if (!t.locked) {
-        const i = calc.items[idx];
-        // BRP zaključanih drugih tipova
-        const brpLocked = calc.items
-          .filter((x,k)=>k!==idx && x.locked)
-          .reduce((s,x)=>s + x.units * x.brpPerUnit, 0);
-        const brpFree = Math.max(0, brpLimit - brpLocked);
-        const maxUnits = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
-        if (i.units > maxUnits) {
-          const newShare = (maxUnits * i.brpPerUnit) / Math.max(1, brpLimit) * 100;
-          if (Math.abs(newShare - share) > 0.0001) {
-            share = newShare;
-            changed = true;
-          }
-        }
-      }
-      return { ...t, share };
-    });
-    if (changed) {
-      setTypes(prev => normalizeShares(next));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brpLimit, types.map(t=>t.locked).join(','), calc.totalAchieved]);
+  /* --- NEMA automatskog clampanja na promjenu lockova --- */
+  // (Namjerno uklonjeno: zaključavanje samo „zamrzne” vrijednosti; ništa se
+  // ne pomiče dok korisnik ručno ne povuče neki slider.)
 
   /* --- XLS export --- */
   async function exportXLS() {
@@ -533,13 +507,14 @@ export default function SharePage({ params }: { params: { id: string } }) {
             const brpLocked = calc.items.filter((x,k)=>k!==idx && x.locked)
               .reduce((s,x)=>s + x.units * x.brpPerUnit, 0);
             const brpFree = Math.max(0, brpLimit - brpLocked);
-            // maksimalno što ovaj tip može zauzeti u ovim uvjetima
-            const maxUnits = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
-            // vrijednost koju prikazujemo (sprječava “bijeg” thumb-a)
-            const displayUnits = Math.min(i.units, maxUnits);
+
+            // dopušten maksimum: ne smiješ povećati preko ovoga,
+            // ali slider NEĆE „skočiti” jer max ≥ trenutna vrijednost
+            const allowedMax = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
+            const visualMax  = Math.max(i.units, allowedMax);
 
             // obojana traka (fallback uz accent-color)
-            const fillPct = maxUnits > 0 ? Math.round((displayUnits / maxUnits) * 100) : 0;
+            const fillPct = visualMax > 0 ? Math.round((i.units / visualMax) * 100) : 0;
             const sliderStyle: React.CSSProperties = {
               accentColor: color,
               background: `linear-gradient(to right, ${color} ${fillPct}%, #e5e7eb ${fillPct}%)`,
@@ -548,16 +523,21 @@ export default function SharePage({ params }: { params: { id: string } }) {
               borderRadius: '9999px'
             };
 
-            // helper za pravilo: smiju biti najviše 2 lockana; treći → svi lockani
+            // Najviše 2 zaključana
             const toggleLock = () => {
               setTypes(prev => {
-                const next = prev.map(x => x.id===t.id ? ({...x, locked: !x.locked}) : x);
-                const lockedCount = next.filter(x=>x.locked).length;
-                if (lockedCount > 2) {
-                  // treći se pokušao zaključati -> zaključaj SVE
-                  return next.map(x => ({...x, locked: true}));
+                const curr = prev.find(x=>x.id===t.id);
+                if (!curr) return prev;
+                // pokušaj zaključavanja?
+                if (!curr.locked) {
+                  const lockedCount = prev.filter(x=>x.locked).length;
+                  if (lockedCount >= 2) {
+                    setNotice('Možeš zaključati najviše 2 tipa. Otključaj jedan pa pokušaj ponovno.');
+                    setTimeout(()=>setNotice(null),3000);
+                    return prev; // blokiraj
+                  }
                 }
-                return next;
+                return prev.map(x => x.id===t.id ? ({...x, locked: !x.locked}) : x);
               });
             };
 
@@ -608,34 +588,34 @@ export default function SharePage({ params }: { params: { id: string } }) {
                       Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b>
                     </div>
                     <div className="text-xs text-slate-700">
-                      Broj stanova: <b className="tabular-nums">{fmt0(displayUnits)}</b>
+                      Broj stanova: <b className="tabular-nums">{fmt0(i.units)}</b>
                     </div>
                   </div>
                   <input
                     className="w-full mt-2"
                     type="range"
                     min={0}
-                    max={maxUnits}
+                    max={visualMax}
                     step={1}
-                    value={displayUnits}
+                    value={i.units}
                     onChange={(e)=>changeUnits(t.id, Number(e.target.value))}
                     style={sliderStyle}
                     aria-label="Broj stanova"
                     disabled={t.locked}
                   />
-                  <div className="sr-only">Maksimalno: {fmt0(maxUnits)} stanova</div>
+                  <div className="sr-only">Maksimalno: {fmt0(allowedMax)} stanova</div>
                 </div>
 
                 {/* SUMARNI RED */}
                 <div className="md:hidden grid grid-cols-2 gap-3 text-xs text-slate-700 mt-1">
-                  <div>NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * displayUnits)}</b> m²</div>
-                  <div className="text-right">BRP: <b className="tabular-nums">{fmt0(i.brpPerUnit * displayUnits)}</b> m²</div>
+                  <div>NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
+                  <div className="text-right">BRP: <b className="tabular-nums">{fmt0(i.brpPerUnit * i.units)}</b> m²</div>
                 </div>
                 <div className="hidden md:block text-xs text-slate-700">
-                  NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * displayUnits)}</b> m²
+                  NETO: <b className="tabular-nums">{fmt0(i.netoPerUnit * i.units)}</b> m²
                 </div>
                 <div className="hidden md:block text-xs text-slate-700 text-right">
-                  BRP: <b className="tabular-nums">{fmt0(i.brpPerUnit * displayUnits)}</b> m²
+                  BRP: <b className="tabular-nums">{fmt0(i.brpPerUnit * i.units)}</b> m²
                 </div>
               </div>
             );
@@ -643,7 +623,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
 
         <div className="mt-4 text-right text-sm text-slate-700">
-          Ukupno stanova: <b>{fmt0(calc.items.reduce((s,i)=>s+Math.min(i.units, Math.floor(Math.max(0, (brpLimit - calc.items.filter((x,k)=>x.locked && calc.items.indexOf(i)!==k).reduce((ss,xx)=>ss+xx.units*xx.brpPerUnit,0)) / i.brpPerUnit))) ,0))}</b>
+          Ukupno stanova: <b>{fmt0(calc.items.reduce((s,i)=>s+i.units,0))}</b>
         </div>
       </section>
     </main>

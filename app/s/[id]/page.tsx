@@ -202,9 +202,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
       return normalized;
     });
   }
-  function changeNetoRange(id: string, value: number) {
-    setTypes(prev => prev.map(x => x.id===id ? { ...x, neto: Math.round(value) } : x));
-  }
   function changeNetoStep(id: string, delta: number) {
     setTypes(prev => {
       const t = prev.find(x => x.id===id);
@@ -524,7 +521,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                   </div>
                   <div className="text-xs text-gray-500 mb-2">{t.desc || defaultDesc(t.code)}</div>
 
-                  {/* NETO: minus / value / plus + mini slider (step 1 m²) */}
+                  {/* NETO: samo − / + (korak 1 m²) */}
                   <div className="flex flex-col gap-2">
                     <div className="text-xs text-gray-500">NETO po stanu (m²)</div>
                     <div className="flex items-center gap-2">
@@ -541,19 +538,10 @@ export default function SharePage({ params }: { params: { id: string } }) {
                         className="px-2 py-1 rounded-md border"
                         aria-label="Povećaj NETO"
                       >+</button>
-                      <input
-                        className="ml-2 flex-1"
-                        type="range"
-                        min={minN}
-                        max={maxN}
-                        step={1}
-                        value={t.neto}
-                        onChange={(e)=>changeNetoRange(t.id, Number(e.target.value))}
-                        style={{ accentColor: color }}
-                        aria-label="NETO slider"
-                      />
                     </div>
-                    <div className="text-[11px] text-gray-500">[{minN}–{maxN}] • BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
+                    <div className="text-[11px] text-gray-500">
+                      [{minN}–{maxN}] • BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²
+                    </div>
                   </div>
                 </div>
 

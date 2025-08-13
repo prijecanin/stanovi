@@ -23,18 +23,16 @@ type Snapshot = { id: string; name: string; created_at: string; brp_limit: numbe
 
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
+/** poziv server‑akcije + kopiranje linka */
 function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
   async function run(copyNotice: (msg: string)=>void) {
-    if (!projectId) {
-      copyNotice("Nedostaje projectId (stranica još učitava projekt).");
-      return;
-    }
+    if (!projectId) { copyNotice("Nedostaje projectId."); return; }
     setBusy(true); setErr(null);
     try {
       const fd = new FormData();
-      fd.set("projectId", projectId);       // server action će i bez ovoga pasti na params.id, ali šaljemo eksplicitno
+      fd.set("projectId", projectId);
       const res = await action({}, fd);
       if (res?.error) throw new Error(res.error);
       if (!res?.link) throw new Error("Server nije vratio link.");
@@ -68,9 +66,11 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
+  // gumbi za linkove
   const copyView = useCopyLink(makeViewLink, projectId || "", "view");
   const copyEdit = useCopyLink(makeEditLink, projectId || "", "edit");
 
+  // ---------- FETCH: projekt + tipovi ----------
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -103,6 +103,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     return () => { alive = false; };
   }, [paramsId]);
 
+  // ---------- FETCH: liste konfiguracija ----------
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
@@ -122,6 +123,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     return () => { alive = false; };
   }, [projectId]);
 
+  // ---------- helpers ----------
   function normalizeShares(arr: UnitType[], pinnedId?: string) {
     const lockedSum = arr.filter(t => t.locked).reduce((s,t)=>s+(Number(t.share)||0),0);
     const pinned = pinnedId ? arr.find(t=>t.id===pinnedId) : undefined;
@@ -151,6 +153,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
 
   const barData = base.items.map((i,idx)=>({ name:i.code, units:i.units, color:COLORS[idx%COLORS.length] }));
 
+  // ---------- autosave BRP ----------
   const brpInitial = useRef(true);
   useEffect(() => {
     if (!projectId) return;
@@ -164,6 +167,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     return ()=>clearTimeout(h);
   }, [brpLimit, projectId]);
 
+  // ---------- save shares (debounced) ----------
   const saveSharesTimer = useRef<number|null>(null);
   function saveSharesDebounced(next: UnitType[]) {
     if (!projectId) return;
@@ -178,6 +182,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     },500);
   }
 
+  // ---------- save single field (debounced) ----------
   const saveTypeTimers = useRef<Record<string,number>>({});
   function saveTypeDebounced(id:string, patch: Partial<Pick<UnitType,"neto"|"locked"|"share">>) {
     if (!projectId) return;
@@ -189,6 +194,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     },400);
   }
 
+  // ---------- UI akcije ----------
   function changeUnits(id:string, unitsIn:number){
     const targetUnits = Math.max(0, Math.round(Number(unitsIn)||0));
     setTypes(prev=>{
@@ -212,6 +218,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     saveTypeDebounced(id,{locked:nextLocked});
   }
 
+  // ---------- rename projekta ----------
   async function saveProjectName() {
     if (!projectId) return;
     const trimmed = nameDraft.trim();
@@ -229,6 +236,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     }
   }
 
+  // ---------- XLS export ----------
   async function exportXLS() {
     try {
       const XLSX = await import("xlsx");
@@ -260,69 +268,261 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     }
   }
 
-  async function saveSnapshot(){ /* isti kod kao prije */ }
-  async function renameSnapshot(conf:Snapshot){ /* isti kod kao prije */ }
-  async function loadSnapshot(confId:string){ /* isti kod kao prije */ }
-  async function deleteSnapshot(confId:string){ /* isti kod kao prije */ }
+  // ---------- SNAPSHOTI ----------
+  async function saveSnapshot(){
+    try{
+      if(!projectId) return;
+      const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
+      const name = window.prompt("Naziv konfiguracije:", defaultName);
+      if(!name) return;
+      setSaving(true); setNotice(null);
+      const { data: conf, error: e1 } = await supabase.from("configurations")
+        .insert({ project_id:projectId, name, brp_limit:brpLimit, ratio:RATIO, tolerance })
+        .select("id, name, created_at, brp_limit, ratio, tolerance").single();
+      if (e1) throw e1;
+      const itemsPayload = base.items.map(i=>({
+        configuration_id: conf.id, project_unit_type_id:i.id,
+        share: Math.round((i.share||0)*100)/100, units:i.units,
+        neto_per_unit:i.netoPerUnit, brp_per_unit:i.brpPerUnit
+      }));
+      const { error: e2 } = await supabase.from("configuration_items").insert(itemsPayload);
+      if (e2) throw e2;
+      setSnapshots(prev=>[conf as Snapshot, ...prev]);
+      setNotice("Konfiguracija spremljena.");
+    }catch(e:any){ setNotice(`Greška pri spremanju: ${e?.message ?? e}`); }
+    finally{ setSaving(false); setTimeout(()=>setNotice(null),4000); }
+  }
+  async function renameSnapshot(conf:Snapshot){
+    const newName = window.prompt("Novi naziv konfiguracije:", conf.name);
+    if(!newName || newName===conf.name) return;
+    try{
+      const { error } = await supabase.from("configurations").update({ name:newName }).eq("id", conf.id);
+      if (error) throw error;
+      setSnapshots(prev=>prev.map(s=>s.id===conf.id?{...s,name:newName}:s));
+    }catch(e:any){ setNotice(`Greška pri preimenovanju: ${e?.message ?? e}`); setTimeout(()=>setNotice(null),4000); }
+  }
+  async function loadSnapshot(confId:string){
+    try{
+      if(!projectId) return;
+      setNotice(null);
+      const { data: conf, error: e0 } = await supabase.from("configurations").select("id, brp_limit, ratio, tolerance").eq("id",confId).single();
+      if (e0) throw e0;
+      const { data: items, error: e1 } = await supabase.from("configuration_items")
+        .select("project_unit_type_id, share, neto_per_unit, brp_per_unit").eq("configuration_id", confId);
+      if (e1) throw e1;
+      const byId = new Map(items?.map((r:any)=>[r.project_unit_type_id,r]));
+      setBrpLimit(conf.brp_limit ?? brpLimit); setTolerance(conf.tolerance ?? tolerance);
+      setTypes(prev=>prev.map(t=>{
+        const row = byId.get(t.id); if(!row) return t;
+        return { ...t, share:Number(row.share)||0, neto:Math.max(10, Math.round(Number(row.neto_per_unit)||t.neto)) };
+      }));
+      setNotice("Konfiguracija učitana."); setTimeout(()=>setNotice(null),3000);
+    }catch(e:any){ setNotice(`Greška pri učitavanju: ${e?.message ?? e}`); setTimeout(()=>setNotice(null),4000); }
+  }
+  async function deleteSnapshot(confId:string){
+    if(!window.confirm("Obrisati konfiguraciju? Ova radnja je trajna.")) return;
+    try{
+      const { error } = await supabase.from("configurations").delete().eq("id", confId);
+      if (error) throw error;
+      setSnapshots(prev=>prev.filter(s=>s.id!==confId));
+    }catch(e:any){ setNotice(`Greška pri brisanju: ${e?.message ?? e}`); setTimeout(()=>setNotice(null),4000); }
+  }
 
+  // ---------- RENDER ----------
   if (loading) return <main className="p-4">Učitavanje…</main>;
   if (err)     return <main className="p-4 text-red-700">Greška: {err}</main>;
 
   return (
     <main className="grid gap-4">
-      {/* header… */}
-      <div className="flex items-end gap-3">
-        <div className="text-sm text-gray-500">BRP stambenog dijela zgrade</div>
-        <input className="px-3 py-2 border rounded-xl w-40" type="number" value={brpLimit} onChange={e=>setBrpLimit(Number(e.target.value)||0)} />
-        <button onClick={exportXLS} className="px-4 py-2 rounded-xl border">Preuzmi XLS</button>
-        <button
-          onClick={saveSnapshot}
-          disabled={saving||!projectId}
-          className={`px-4 py-2 rounded-xl text-white ${saving?"bg-gray-400":"bg-black hover:opacity-90"}`}
-          title="Spremi aktualnu raspodjelu kao konfiguraciju"
-        >
-          {saving ? "Spremam…" : "Spremi konfiguraciju"}
-        </button>
+      <div className="flex items-center justify-between">
+        <div>
+          <Link
+            href="/app/projects"
+            className="text-sm text-blue-600 hover:underline"
+            title="Natrag na listu projekata"
+          >
+            ← Projekti
+          </Link>
 
-        {/* “stari” javni view link po želji */}
-        <button
-          onClick={() => {
-            if (!projectId) return;
-            const url = `${window.location.origin}/s/${projectId}`;
-            navigator.clipboard.writeText(url).then(
-              () => { setNotice("Link za klijenta je kopiran u clipboard."); setTimeout(()=>setNotice(null), 2500); },
-              () => { setNotice("Ne mogu kopirati link. Probaj ručno."); setTimeout(()=>setNotice(null), 3500); },
-            );
-          }}
-          className="px-4 py-2 rounded-xl border"
-          title="Kopiraj javni read-only link"
-        >
-          Kopiraj link (view – bez uređivanja)
-        </button>
+          <div className="text-sm text-gray-500 mt-1">Projekt</div>
 
-        {/* NOVO: generiraj i kopiraj VIEW/EDIT token linkove */}
-        <button
-          disabled={!projectId || copyView.busy}
-          onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
-          className="px-4 py-2 rounded-xl border"
-          title="Generiraj i kopiraj VIEW link"
-        >
-          {copyView.busy ? "…" : "Kopiraj VIEW link"}
-        </button>
+          {!editingName ? (
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-semibold">{name}</h2>
+              <button
+                className="px-2 py-1 rounded-lg border text-xs"
+                onClick={()=>{ setEditingName(true); setNameDraft(name); }}
+                title="Preimenuj projekt"
+              >
+                Uredi
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                className="px-3 py-2 border rounded-xl"
+                value={nameDraft}
+                autoFocus
+                onChange={e=>setNameDraft(e.target.value)}
+                onKeyDown={e=>{ if (e.key==='Enter') saveProjectName(); if (e.key==='Escape'){ setEditingName(false); setNameDraft(name); } }}
+              />
+              <button className="px-3 py-2 rounded-xl border bg-black text-white" onClick={saveProjectName}>Spremi</button>
+              <button className="px-3 py-2 rounded-xl border" onClick={()=>{ setEditingName(false); setNameDraft(name); }}>Odustani</button>
+            </div>
+          )}
+        </div>
 
-        <button
-          disabled={!projectId || copyEdit.busy}
-          onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
-          className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
-          title="Generiraj i kopiraj EDIT link"
-        >
-          {copyEdit.busy ? "…" : "Kopiraj EDIT link"}
-        </button>
+        <div className="flex items-end gap-3">
+          <div className="text-sm text-gray-500">BRP stambenog dijela zgrade</div>
+          <input className="px-3 py-2 border rounded-xl w-40" type="number" value={brpLimit} onChange={e=>setBrpLimit(Number(e.target.value)||0)} />
+          <button onClick={exportXLS} className="px-4 py-2 rounded-xl border">Preuzmi XLS</button>
+          <button
+            onClick={saveSnapshot}
+            disabled={saving||!projectId}
+            className={`px-4 py-2 rounded-xl text-white ${saving?"bg-gray-400":"bg-black hover:opacity-90"}`}
+            title="Spremi aktualnu raspodjelu kao konfiguraciju"
+          >
+            {saving ? "Spremam…" : "Spremi konfiguraciju"}
+          </button>
+
+          {/* stari javni (read‑only) link po želji */}
+          <button
+            onClick={() => {
+              if (!projectId) return;
+              const url = `${window.location.origin}/s/${projectId}`;
+              navigator.clipboard.writeText(url).then(
+                () => { setNotice("Link za klijenta je kopiran u clipboard."); setTimeout(()=>setNotice(null), 2500); },
+                () => { setNotice("Ne mogu kopirati link. Probaj ručno."); setTimeout(()=>setNotice(null), 3500); },
+              );
+            }}
+            className="px-4 py-2 rounded-xl border"
+            title="Kopiraj javni read-only link"
+          >
+            Kopiraj link (view – bez uređivanja)
+          </button>
+
+          {/* NOVO: token linkovi */}
+          <button
+            disabled={!projectId || copyView.busy}
+            onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+            className="px-4 py-2 rounded-xl border"
+            title="Generiraj i kopiraj VIEW link"
+          >
+            {copyView.busy ? "…" : "Kopiraj VIEW link"}
+          </button>
+
+          <button
+            disabled={!projectId || copyEdit.busy}
+            onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+            className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
+            title="Generiraj i kopiraj EDIT link"
+          >
+            {copyEdit.busy ? "…" : "Kopiraj EDIT link"}
+          </button>
+        </div>
       </div>
 
       {notice && <div className="rounded-xl p-3 bg-emerald-50 text-emerald-800 border border-emerald-200">{notice}</div>}
 
-      {/* … ostatak tvoje stranice (grafovi, tipovi, snapshoti) ostaje isti … */}
+      {/* Sačuvane konfiguracije */}
+      <section className="card">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold">Sačuvane konfiguracije</h3>
+          <div className="text-xs text-gray-500">{loadingSnaps ? "Učitavanje…" : `(${snapshots.length})`}</div>
+        </div>
+        {snapshots.length===0 ? (
+          <div className="text-sm text-gray-500">Još nema sačuvanih konfiguracija.</div>
+        ) : (
+          <div className="grid gap-2">
+            {snapshots.map(s=>(
+              <div key={s.id} className="flex items-center justify-between border rounded-xl px-3 py-2">
+                <div className="text-sm">
+                  <div className="font-medium">{s.name}</div>
+                  <div className="text-gray-500">{new Date(s.created_at).toLocaleString('hr-HR')}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>loadSnapshot(s.id)} className="px-3 py-1 rounded-lg border hover:bg-gray-50">Učitaj</button>
+                  <button onClick={()=>renameSnapshot(s)} className="px-3 py-1 rounded-lg border hover:bg-gray-50">Preimenuj</button>
+                  <button onClick={()=>deleteSnapshot(s.id)} className="px-3 py-1 rounded-lg border bg-red-600 text-white hover:opacity-90">Obriši</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Tipovi i udjeli */}
+      <section className="card">
+        <h3 className="font-semibold mb-2">Tipovi i udjeli</h3>
+        <div className="grid gap-3">
+          {base.items.map((i, idx) => {
+            const t = types[idx]; const maxUnits = Math.max(0, Math.floor(brpLimit / i.brpPerUnit));
+            return (
+              <div key={t.id} className="grid items-center gap-3" style={{gridTemplateColumns:'100px 1.1fr 4.5fr 1.2fr'}}>
+                <div className="flex items-center gap-2">
+                  <div className="font-bold">{t.code}</div>
+                  <button onClick={()=>toggleLock(t.id)} className={`px-2 py-1 rounded-lg border text-sm ${t.locked?"bg-red-100":"bg-gray-100"}`} title={t.locked?"Otključaj udio":"Zaključaj udio"}>{t.locked?"🔒":"🔓"}</button>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">NETO po stanu (m²)</div>
+                  <input className="px-3 py-2 border rounded-xl w-full" type="number" min={10} value={t.neto} onChange={e=>changeNeto(t.id, e.target.value)} />
+                  <div className="text-xs text-gray-500 mt-1">BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
+                </div>
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-xs text-gray-500">Udio (%) <b className="text-slate-700">{Math.round(t.share)}%</b></div>
+                    <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(i.units)}</b></div>
+                  </div>
+                  <input className="w-full mt-2" type="range" min={0} max={maxUnits} step={1} value={i.units} onChange={e=>changeUnits(t.id, Number(e.target.value))} style={{accentColor:COLORS[idx%COLORS.length]}} />
+                </div>
+                <div>
+                  <div className="text-xs text-slate-700">NETO: <b>{fmt0(i.netoPerUnit*i.units)}</b> m²</div>
+                  <div className="text-xs text-slate-700 mt-1">BRP: <b>{fmt0(i.achievedBrp)}</b> m²</div>
+                </div>
+              </div>
+            );
+          })}
+          <div className="text-right text-sm text-slate-700">Ukupno stanova: <b>{fmt0(base.items.reduce((s,i)=>s+i.units,0))}</b></div>
+        </div>
+      </section>
+
+      {/* kartice s grafikonima */}
+      <section className="card">
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl p-3 bg-green-50 text-green-900">
+            <div>ukupno NETO: <b>{fmt0(base.totalNeto)}</b> m²</div>
+            <div className="mt-1">ukupno BRP: <b>{fmt0(base.totalAchieved)}</b> m²</div>
+          </div>
+          <div className="md:col-span-1">
+            <div style={{height:220}}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart margin={{ top:8, right:8, bottom:32, left:8 }}>
+                  <Pie data={types.map((t,i)=>({name:t.code, value:Math.round(t.share)}))} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2}>
+                    {types.map((_,idx)=><Cell key={idx} fill={COLORS[idx%COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip formatter={(v:any)=>`${v}%`} />
+                  <Legend verticalAlign="bottom" height={24} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="md:col-span-1">
+            <div style={{height:180}}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" tickLine={false} />
+                  <YAxis allowDecimals={false} tickLine={false} />
+                  <Tooltip />
+                  <Bar dataKey="units" radius={[8,8,0,0]}>
+                    {barData.map((e,idx)=><Cell key={idx} fill={e.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

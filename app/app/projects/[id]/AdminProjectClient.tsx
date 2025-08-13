@@ -13,8 +13,8 @@ type Props = {
   paramsId: string;
   makeViewLink: LinkAction;
   makeEditLink: LinkAction;
-  makeShortViewLink: LinkAction;  // NOVO
-  makeShortEditLink: LinkAction;  // NOVO
+  makeShortViewLink: LinkAction;  // s TTL-om
+  makeShortEditLink: LinkAction;  // s TTL-om
 };
 
 const RATIO = 0.65;
@@ -35,21 +35,23 @@ function slugify(s: string) {
     .slice(0, 48);
 }
 
-/** server‑akcija + kopiranje dugog linka */
+/** server‑akcija + kopiranje dugog linka (s TTL-om) */
 function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
-  async function run(copyNotice: (msg: string)=>void) {
+  async function run(copyNotice: (msg: string)=>void, hours: number) {
     if (!projectId) { copyNotice("Nedostaje projectId."); return; }
+    const safeHours = Math.max(1, Math.round(hours)||1);
     setBusy(true); setErr(null);
     try {
       const fd = new FormData();
       fd.set("projectId", projectId);
+      fd.set("hours", String(safeHours));
       const res = await action({}, fd);
       if (res?.error) throw new Error(res.error);
       if (!res?.link) throw new Error("Server nije vratio link.");
       await navigator.clipboard.writeText(res.link);
-      copyNotice(scope === "view" ? "VIEW link kopiran." : "EDIT link kopiran.");
+      copyNotice(`${scope.toUpperCase()} link (${safeHours}h) kopiran.`);
     } catch (e:any) {
       const msg = e?.message || String(e);
       setErr(msg);
@@ -59,24 +61,26 @@ function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit"
   return { run, busy, err };
 }
 
-/** server‑akcija + kreiranje kratkog linka i kopiranje */
+/** server‑akcija + kreiranje kratkog linka i kopiranje (s TTL-om) */
 function useCreateShort(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
-  async function run(slugIn: string, notify: (m:string)=>void) {
+  async function run(slugIn: string, notify: (m:string)=>void, hours: number) {
     if (!projectId) { notify("Nedostaje projectId."); return; }
     const slug = slugify(slugIn);
     if (!slug) { notify("Upiši kratko ime (slug)."); return; }
+    const safeHours = Math.max(1, Math.round(hours)||1);
     setBusy(true); setErr(null);
     try {
       const fd = new FormData();
       fd.set("projectId", projectId);
       fd.set("slug", slug);
+      fd.set("hours", String(safeHours));
       const res = await action({}, fd);
       if (res?.error) throw new Error(res.error);
       if (!res?.shortUrl) throw new Error("Server nije vratio shortUrl.");
       await navigator.clipboard.writeText(res.shortUrl);
-      notify(`Kratki ${scope.toUpperCase()} link kopiran: ${res.shortUrl}`);
+      notify(`Kratki ${scope.toUpperCase()} link (${safeHours}h) kopiran: ${res.shortUrl}`);
     } catch (e:any) {
       const msg = e?.message || String(e);
       setErr(msg);
@@ -103,6 +107,9 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
 
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+
+  // TTL za linkove (sati)
+  const [hours, setHours] = useState<number>(168); // default 7 dana
 
   // linkovi
   const copyView  = useCopyLink(makeViewLink,  projectId || "", "view");
@@ -414,10 +421,24 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
             {saving ? "Spremam…" : "Spremi konfiguraciju"}
           </button>
 
+          {/* trajanje tokena */}
+          <div className="flex items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500">Trajanje tokena (sati)</label>
+              <input
+                className="px-3 py-2 border rounded-xl w-28"
+                type="number"
+                min={1}
+                value={hours}
+                onChange={e=>setHours(Math.max(1, Number(e.target.value)||1))}
+              />
+            </div>
+          </div>
+
           {/* dugi token linkovi */}
           <button
             disabled={!projectId || copyView.busy}
-            onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+            onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
             className="px-4 py-2 rounded-xl border"
             title="Generiraj i kopiraj VIEW link"
           >
@@ -425,7 +446,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
           </button>
           <button
             disabled={!projectId || copyEdit.busy}
-            onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+            onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
             className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
             title="Generiraj i kopiraj EDIT link"
           >
@@ -445,7 +466,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
             </div>
             <button
               disabled={!projectId || shortView.busy}
-              onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+              onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
               className="px-4 py-2 rounded-xl border"
               title="Kreiraj i kopiraj KRATKI VIEW link (r/{slug})"
             >
@@ -453,7 +474,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
             </button>
             <button
               disabled={!projectId || shortEdit.busy}
-              onClick={()=> shortEdit.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+              onClick={()=> shortEdit.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
               className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
               title="Kreiraj i kopiraj KRATKI EDIT link (r/{slug})"
             >

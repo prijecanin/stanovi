@@ -12,7 +12,7 @@ function getOrigin() {
   return `${proto}://${host}`;
 }
 
-// server‑akcija: generiraj tokenizirani link (view/edit)
+// server‑akcija: generiraj tokenizirani link (view/edit) s prilagodljivim trajanjem
 const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
   return async (_: any, formData: FormData) => {
     "use server";
@@ -23,7 +23,13 @@ const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
       if (!process.env.LINK_SECRET) return { error: "LINK_SECRET nije postavljen." };
 
       const origin = getOrigin();
-      const token = await makeShareToken({ projectId, scope }, 7 * 24 * 3600);
+
+      // trajanje u satima (default 168h = 7 dana)
+      const hoursRaw = String(formData.get("hours") || "168");
+      const hoursNum = Math.max(1, parseInt(hoursRaw, 10) || 168);
+      const ttlSec = hoursNum * 3600;
+
+      const token = await makeShareToken({ projectId, scope }, ttlSec);
       const link  = `${origin}/s/${encodeURIComponent(projectId)}?t=${encodeURIComponent(token)}`;
       return { link };
     } catch (e: any) {
@@ -32,7 +38,7 @@ const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
   };
 };
 
-// server‑akcija: generiraj KRATKI link (slug) → upiši u tablicu `short_links`
+// server‑akcija: generiraj KRATKI link (slug) → upiši u tablicu `short_links` (s prilagodljivim trajanjem)
 const makeShortFactory = (paramsId: string, scope: "view" | "edit") => {
   return async (_: any, formData: FormData) => {
     "use server";
@@ -45,7 +51,13 @@ const makeShortFactory = (paramsId: string, scope: "view" | "edit") => {
       if (!process.env.LINK_SECRET) return { error: "LINK_SECRET nije postavljen." };
 
       const origin = getOrigin();
-      const token = await makeShareToken({ projectId, scope }, 7 * 24 * 3600);
+
+      // trajanje u satima (default 168h = 7 dana)
+      const hoursRaw = String(formData.get("hours") || "168");
+      const hoursNum = Math.max(1, parseInt(hoursRaw, 10) || 168);
+      const ttlSec = hoursNum * 3600;
+
+      const token = await makeShareToken({ projectId, scope }, ttlSec);
       const longUrl = `${origin}/s/${encodeURIComponent(projectId)}?t=${encodeURIComponent(token)}`;
 
       const SUPABASE_URL = process.env.SUPABASE_URL!;

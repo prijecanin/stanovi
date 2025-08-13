@@ -1,12 +1,22 @@
 // lib/tokens.ts
 import { SignJWT, jwtVerify } from "jose";
 
-// U Node okruženju:
-import { randomUUID } from "crypto";
-// Ako build ide u edge/bez crypto, fallback:
-// const randomUUID = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
+// helper: dohvat tajne kada treba (ne na importu)
+function getSecretBytes() {
+  const s = process.env.LINK_SECRET;
+  if (!s) {
+    throw new Error("LINK_SECRET nije postavljen.");
+  }
+  return new TextEncoder().encode(s);
+}
 
-const secret = new TextEncoder().encode(process.env.LINK_SECRET!);
+// siguran rand UUID i u Node i u Edge okruženju
+function makeJti(): string {
+  // globalThis.crypto postoji i u Edge runtimeu
+  // fallback ako ga nema
+  const r = (globalThis as any).crypto?.randomUUID?.();
+  return r ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
 export type SharePayload = {
   projectId: string;
@@ -14,16 +24,15 @@ export type SharePayload = {
 };
 
 export async function makeShareToken(payload: SharePayload, ttlSec = 7 * 24 * 3600) {
-  const jti = randomUUID(); // jedinstveni ID tokena (linka)
+  const jti = makeJti();
   return await new SignJWT({ ...payload, jti })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSec)
     .setJti(jti)
-    .sign(secret);
+    .sign(getSecretBytes()); // <- tajna se čita tek sad
 }
 
 export async function verifyShareToken(token: string) {
-  const { payload } = await jwtVerify(token, secret);
-  // payload sada sadrži i jti
+  const { payload } = await jwtVerify(token, getSecretBytes()); // <- i ovdje
   return payload as SharePayload & { exp: number; jti?: string };
 }

@@ -7,91 +7,13 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from "recharts";
 
+/* =================== Helpers & konstante =================== */
+
 const RATIO = 0.65;
 const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444','#8b5cf6','#14b8a6'] as const;
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
-const brpPerUnit = (neto:number) => Math.max(1, Math.round((neto||0)/RATIO));
-
-function totalAchieved(list: {units:number; neto:number}[]) {
-  return list.reduce((s, t) => s + t.units * brpPerUnit(t.neto), 0);
-}
-
-/** Rebalance – drži ukupni BRP = brpLimit. Pinned/locked tipove poštujemo. */
-function rebalanceUnits<T extends { id: string; neto: number; units: number; locked?: boolean }>(
-  arr: T[],
-  brpLimit: number,
-  pinnedId?: string
-): T[] {
-  const items = arr.map(t => ({ ...t, bpu: Math.max(1, Math.round((t.neto || 0) / RATIO)) }));
-  const isLocked = (t: any) => !!t.locked;
-
-  const pinned = pinnedId ? items.find(t => t.id === pinnedId) : undefined;
-  const lockedSum = items.filter(isLocked).reduce((s, t) => s + t.units * t.bpu, 0);
-  const pinnedSum = pinned ? pinned.units * pinned.bpu : 0;
-
-  const free = items.filter(t => !isLocked(t) && t.id !== pinnedId);
-  const freeSum = free.reduce((s, t) => s + t.units * t.bpu, 0);
-  const targetFree = Math.max(0, brpLimit - lockedSum - pinnedSum);
-
-  const nextUnits = new Map<string, number>(items.map(t => [t.id, t.units]));
-  if (free.length > 0) {
-    if (freeSum > 0) {
-      const factor = targetFree / freeSum;
-      free.forEach(t => nextUnits.set(t.id, Math.max(0, Math.round(t.units * factor))));
-    } else {
-      let left = targetFree;
-      const sorted = [...free].sort((a, b) => a.bpu - b.bpu);
-      outer: while (left >= (sorted[0]?.bpu ?? Infinity)) {
-        for (const t of sorted) {
-          if (left >= t.bpu) {
-            nextUnits.set(t.id, (nextUnits.get(t.id) || 0) + 1);
-            left -= t.bpu;
-          }
-          if (left < (sorted[0]?.bpu ?? Infinity)) break outer;
-        }
-      }
-    }
-  }
-
-  // fina korekcija
-  const achieved = items.reduce((s, t) => s + (nextUnits.get(t.id) || 0) * t.bpu, 0);
-  let diff = brpLimit - achieved;
-  if (free.length > 0 && diff !== 0) {
-    if (diff > 0) {
-      const asc = [...free].sort((a, b) => a.bpu - b.bpu);
-      let guard = 10000;
-      while (diff >= asc[0].bpu && guard--) {
-        for (const t of asc) {
-          if (diff >= t.bpu) {
-            nextUnits.set(t.id, (nextUnits.get(t.id) || 0) + 1);
-            diff -= t.bpu;
-          }
-          if (diff < asc[0].bpu) break;
-        }
-      }
-    } else {
-      const desc = [...free].sort((a, b) => b.bpu - a.bpu);
-      let guard = 10000;
-      while (diff < 0 && guard--) {
-        let changed = false;
-        for (const t of desc) {
-          const cur = nextUnits.get(t.id) || 0;
-          if (cur > 0) {
-            nextUnits.set(t.id, cur - 1);
-            diff += t.bpu;
-            changed = true;
-            if (diff >= 0) break;
-          }
-        }
-        if (!changed) break;
-      }
-    }
-  }
-
-  return arr.map(t => ({ ...t, units: Math.max(0, nextUnits.get(t.id) || 0) }));
-}
-
+type TypeState = { id:string; code:string; neto:number; share:number; locked?: boolean; desc?: string };
 type ConfRow = {
   id: string;
   name: string;
@@ -105,21 +27,6 @@ type ConfRow = {
   client_name?: string | null;
 };
 
-type TypeState = { id:string; code:string; neto:number; share:number; locked?: boolean; desc?: string };
-
-function normalizeShares(arr: TypeState[], pinnedId?: string) {
-  const lockedSum = arr.filter(t => t.locked).reduce((s, t) => s + (Number(t.share)||0), 0);
-  const pinned = pinnedId ? arr.find(t => t.id === pinnedId) : undefined;
-  const pinnedShare = pinned && !pinned.locked ? (Number(pinned.share)||0) : 0;
-  const free = arr.filter(t => !t.locked && t.id !== pinnedId);
-  const freeSum = free.reduce((s, t) => s + (Number(t.share)||0), 0);
-  const targetFree = Math.max(0, 100 - lockedSum - pinnedShare);
-  if (free.length === 0 || freeSum === 0) return arr;
-  return arr.map(t => (t.locked || t.id === pinnedId)
-    ? t
-    : { ...t, share: (Number(t.share)||0) / freeSum * targetFree }
-  );
-}
 function defaultDesc(code: string) {
   switch (code) {
     case '1S': return 'Studio / garsonjera (bez spavaće sobe)';
@@ -138,8 +45,19 @@ function netoRange(code: string): [number, number] {
     default:   return [20, 200];
   }
 }
-
-// SVG lokot
+function normalizeShares(arr: TypeState[], pinnedId?: string) {
+  const lockedSum = arr.filter(t => t.locked).reduce((s, t) => s + (Number(t.share)||0), 0);
+  const pinned = pinnedId ? arr.find(t => t.id === pinnedId) : undefined;
+  const pinnedShare = pinned && !pinned.locked ? (Number(pinned.share)||0) : 0;
+  const free = arr.filter(t => !t.locked && t.id !== pinnedId);
+  const freeSum = free.reduce((s, t) => s + (Number(t.share)||0), 0);
+  const targetFree = Math.max(0, 100 - lockedSum - pinnedShare);
+  if (free.length === 0 || freeSum === 0) return arr;
+  return arr.map(t => (t.locked || t.id === pinnedId)
+    ? t
+    : { ...t, share: (Number(t.share)||0) / freeSum * targetFree }
+  );
+}
 function LockIcon({ locked, className }: { locked: boolean; className?: string }) {
   return locked ? (
     <svg viewBox="0 0 24 24" className={className} aria-hidden>
@@ -151,6 +69,8 @@ function LockIcon({ locked, className }: { locked: boolean; className?: string }
     </svg>
   );
 }
+
+/* =================== Komponenta =================== */
 
 export default function SharePage({ params }: { params: { id: string } }) {
   const projectId = params.id;
@@ -169,7 +89,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
   const [notice, setNotice] = useState<string|null>(null);
   const [saving, setSaving] = useState(false);
 
-  // init client key/name
+  /* --- client key/name --- */
   useEffect(() => {
     let key = localStorage.getItem('client_key');
     if (!key) {
@@ -180,7 +100,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     setClientName(localStorage.getItem('client_name') || '');
   }, []);
 
-  // fetch projekt + tipovi
+  /* --- fetch projekt + tipovi --- */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -231,7 +151,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     return () => { alive = false; };
   }, [projectId]);
 
-  // fetch svih konfiguracija projekta
+  /* --- fetch konfiguracije --- */
   async function fetchConfs() {
     try {
       setLoadingConfs(true);
@@ -250,7 +170,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
   }
   useEffect(() => { fetchConfs(); }, [projectId]);
 
-  // kalkulacija iz lokalnog stanja
+  /* --- kalkulacija --- */
   const calc = useMemo(() => {
     const items = types.map(t => {
       const brpPerUnit   = Math.max(1, Math.round((t.neto||0)/RATIO));
@@ -267,7 +187,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     };
   }, [types, brpLimit]);
 
-  // promjene
+  /* --- promjene --- */
   function changeUnits(id: string, unitsIn: number) {
     const targetUnits = Math.max(0, Math.round(Number(unitsIn) || 0));
     setTypes(prev => {
@@ -292,7 +212,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     });
   }
 
-  // XLS export
+  /* --- XLS export --- */
   async function exportXLS() {
     try {
       const XLSX = await import('xlsx');
@@ -320,7 +240,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     } catch {}
   }
 
-  // CRUD klijent konfiguracija
+  /* --- klijent konfiguracije --- */
   async function saveClientConfig() {
     try {
       const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
@@ -439,7 +359,8 @@ export default function SharePage({ params }: { params: { id: string } }) {
     }
   }
 
-  // ---- render
+  /* =================== RENDER =================== */
+
   if (loading) return <main className="p-4">Učitavanje…</main>;
   if (err)     return <main className="p-4 text-red-700">Greška: {err}</main>;
 
@@ -535,7 +456,14 @@ export default function SharePage({ params }: { params: { id: string } }) {
             <div style={{height:220}}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart margin={{ top:8, right:8, bottom:32, left:8 }}>
-                  <Pie data={calc.items.map((i)=>({name:i.code, value:Math.round(i.share)}))} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2}>
+                  <Pie
+                    data={calc.items.map((i)=>({name:i.code, value:Math.round(i.share)}))}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={55}
+                    outerRadius={80}
+                    paddingAngle={2}
+                  >
                     {calc.items.map((_,idx)=><Cell key={idx} fill={COLORS[idx%COLORS.length]} />)}
                   </Pie>
                   <Tooltip formatter={(v:any)=>`${v}%`} />
@@ -551,4 +479,100 @@ export default function SharePage({ params }: { params: { id: string } }) {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" tickLine={false} />
                   <YAxis allowDecimals={false} tickLine={false} />
-                 
+                  <Tooltip />
+                  <Bar dataKey="units" radius={[8,8,0,0]}>
+                    {calc.items.map((_, idx) => (<Cell key={idx} fill={COLORS[idx % COLORS.length]} />))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* TIPOVI — mobile-first layout, slider popunjava širinu na većim ekranima */}
+      <section className="card">
+        <h3 className="font-semibold mb-2">Struktura po tipu</h3>
+        <div className="grid gap-6">
+          {calc.items.map((i, idx) => {
+            const t = types[idx];
+            const [minN, maxN] = netoRange(t.code);
+            const color = COLORS[idx % COLORS.length];
+
+            return (
+              <div
+                key={t.id}
+                className="grid gap-3 md:grid-cols-12 md:items-center"
+              >
+                {/* Lijevi blok: oznaka + opis + NETO unos */}
+                <div className="md:col-span-6">
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className="text-lg font-bold w-10">{t.code}</div>
+                    <button
+                      onClick={()=>setTypes(prev=>prev.map(x=>x.id===t.id?({...x,locked:!x.locked}):x))}
+                      className={`p-1 rounded-md border ${t.locked?'bg-red-50 text-red-600':'bg-gray-50 text-gray-600'}`}
+                      title={t.locked?'Otključaj broj stanova':'Zaključaj broj stanova'}
+                    >
+                      <LockIcon locked={!!t.locked} className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="text-xs text-gray-500 mb-2">{t.desc || defaultDesc(t.code)}</div>
+
+                  <div className="grid grid-cols-2 gap-3 items-end">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">NETO po stanu (m²)</div>
+                      <input
+                        className="px-3 py-2 border rounded-xl w-full"
+                        type="number"
+                        min={minN}
+                        max={maxN}
+                        value={t.neto}
+                        onChange={e=>changeNeto(t.id, e.target.value)}
+                      />
+                      <div className="text-[11px] text-gray-500 mt-1">[{minN}–{maxN}]</div>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²
+                    </div>
+                  </div>
+                </div>
+
+                {/* Desni blok: slider + broj stanova + udio */}
+                <div className="md:col-span-6">
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-xs text-gray-500">
+                      Udio (%) <b className="text-slate-700">{Math.round(i.share)}%</b>
+                    </div>
+                    <div className="text-xs text-slate-700">
+                      Broj stanova: <b>{fmt0(i.units)}</b>
+                    </div>
+                  </div>
+                  <input
+                    className="w-full mt-2"
+                    type="range"
+                    min={0}
+                    max={Math.max(0, Math.floor(brpLimit / i.brpPerUnit))}
+                    step={1}
+                    value={i.units}
+                    onChange={(e)=>changeUnits(t.id, Number(e.target.value))}
+                    style={{ accentColor: color }}
+                  />
+                </div>
+
+                {/* Neto/Brp ukupno (mobitel ispod, desktop u istoj liniji) */}
+                <div className="md:col-span-12 grid grid-cols-2 gap-3 text-xs text-slate-700">
+                  <div>NETO: <b>{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
+                  <div>BRP: <b>{fmt0(i.achievedBrp)}</b> m²</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 text-right text-sm text-slate-700">
+          Ukupno stanova: <b>{fmt0(calc.items.reduce((s,i)=>s+i.units,0))}</b>
+        </div>
+      </section>
+    </main>
+  );
+}

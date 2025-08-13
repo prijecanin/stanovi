@@ -10,23 +10,10 @@ import {
 /* =================== Helpers & konstante =================== */
 
 const RATIO = 0.65;
-// paleta radi i za više od 4 tipa (rotira boje)
-const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444','#8b5cf6','#14b8a6','#e11d48','#0ea5e9'] as const;
+const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444'] as const; // 1S..4S
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
-type TypeState = {
-  id:string;
-  code:string;
-  desc:string;
-  // aktivni NETO u sučelju (klijentski slider +/-)
-  neto:number;
-  // granice iz baze (admin postavlja); mogu biti null → fallback
-  neto_min: number | null;
-  neto_max: number | null;
-  neto_default: number | null;
-  share:number;
-  locked?: boolean;
-};
+type TypeState = { id:string; code:string; neto:number; share:number; locked?: boolean; desc?: string };
 type ConfRow = {
   id: string;
   name: string;
@@ -40,8 +27,7 @@ type ConfRow = {
   client_name?: string | null;
 };
 
-/** default opis po šifri (fallback ako opis nije u bazi) */
-function fallbackDesc(code: string) {
+function defaultDesc(code: string) {
   switch (code) {
     case '1S': return 'Studio / garsonjera (bez spavaće sobe)';
     case '2S': return 'Dnevni + 1 spavaća';
@@ -50,9 +36,7 @@ function fallbackDesc(code: string) {
     default:   return '';
   }
 }
-
-/** default raspon NETO po šifri (fallback ako min/max nisu u bazi) */
-function fallbackRange(code: string): [number, number] {
+function netoRange(code: string): [number, number] {
   switch (code) {
     case '1S': return [25, 35];
     case '2S': return [35, 55];
@@ -61,8 +45,6 @@ function fallbackRange(code: string): [number, number] {
     default:   return [20, 200];
   }
 }
-
-/** normalizacija udjela — radi za bilo koji broj tipova, poštuje zaključane */
 function normalizeShares(arr: TypeState[], pinnedId?: string) {
   const lockedSum = arr.filter(t => t.locked).reduce((s, t) => s + (Number(t.share)||0), 0);
   const pinned = pinnedId ? arr.find(t => t.id === pinnedId) : undefined;
@@ -76,7 +58,6 @@ function normalizeShares(arr: TypeState[], pinnedId?: string) {
     : { ...t, share: (Number(t.share)||0) / freeSum * targetFree }
   );
 }
-
 function LockIcon({ locked, className }: { locked: boolean; className?: string }) {
   return locked ? (
     <svg viewBox="0 0 24 24" className={className} aria-hidden>
@@ -151,7 +132,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     setClientName(localStorage.getItem('client_name') || '');
   }, []);
 
-  /* --- fetch projekt + tipovi (s novim poljima) --- */
+  /* --- fetch projekt + tipovi --- */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -167,33 +148,23 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
         const { data, error } = await supabase
           .from("project_unit_types")
-          .select("id, code, description, neto, share, idx, neto_min, neto_max, neto_default")
+          .select("id, code, description, neto, share, idx")
           .eq("project_id", projectId)
-          .order("idx", { ascending: true })
-          .order("code", { ascending: true });
+          .order("idx", { ascending: true });
         if (error) throw error;
 
-        const rows = (data ?? []) as Array<{
-          id:string; code:string; description:string|null; neto:number; share:number;
-          neto_min: number|null; neto_max: number|null; neto_default:number|null;
-        }>;
+        const rows = (data ?? []) as Array<{id:string; code:string; description:string|null; neto:number; share:number}>;
 
         const initial: TypeState[] = rows.map(r => {
-          const [fbMin, fbMax] = fallbackRange(r.code);
-          const minN = r.neto_min ?? fbMin;
-          const maxN = r.neto_max ?? fbMax;
-          const baseDefault = r.neto_default ?? r.neto ?? Math.round((fbMin+fbMax)/2);
-          const netoClamped = Math.max(minN, Math.min(maxN, Math.round(baseDefault)));
+          const [minN, maxN] = netoRange(r.code);
+          const netoClamped = Math.max(minN, Math.min(maxN, Math.round(r.neto)));
           return {
             id: r.id,
             code: r.code,
-            desc: (r.description ?? fallbackDesc(r.code)),
             neto: netoClamped,
-            neto_min: r.neto_min,
-            neto_max: r.neto_max,
-            neto_default: r.neto_default,
             share: Number(r.share) || 0,
-            locked: false
+            locked: false,
+            desc: r.description ?? defaultDesc(r.code)
           };
         });
 
@@ -231,7 +202,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
   }
   useEffect(() => { fetchConfs(); }, [projectId]);
 
-  /* --- kalkulacija (dinamički za bilo koji broj tipova) --- */
+  /* --- kalkulacija --- */
   const calc = useMemo(() => {
     const items = types.map(t => {
       const brpPerUnit   = Math.max(1, Math.round((t.neto||0)/RATIO));
@@ -267,19 +238,13 @@ export default function SharePage({ params }: { params: { id: string } }) {
       return normalized;
     });
   }
-
   function changeNetoStep(id: string, delta: number) {
     if (!canEdit) return; // guard
     setTypes(prev => {
       const t = prev.find(x => x.id===id);
       if (!t) return prev;
-
-      // koristi granice iz baze; ako su null, fallback po šifri
-      const [fbMin, fbMax] = fallbackRange(t.code);
-      const minN = (t.neto_min ?? fbMin);
-      const maxN = (t.neto_max ?? fbMax);
-
-      const next = Math.max(minN, Math.min(maxN, Math.round((t.neto ?? (t.neto_default ?? minN)) + delta)));
+      const [minN, maxN] = netoRange(t.code);
+      const next = Math.max(minN, Math.min(maxN, Math.round(t.neto + delta)));
       return prev.map(x => x.id===id ? { ...x, neto: next } : x);
     });
   }
@@ -314,53 +279,55 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
   /* --- klijent konfiguracije (save/load/rename/delete) --- */
 
-  async function saveClientConfig() {
-    if (!canEdit || !token) {
-      setNotice("Read-only link – spremanje nije dozvoljeno.");
-      setTimeout(()=>setNotice(null),3000);
-      return;
-    }
-    try {
-      const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
-      const confName = window.prompt("Naziv konfiguracije:", defaultName);
-      if (!confName) return;
-
-      localStorage.setItem('client_name', clientName || '');
-
-      setSaving(true); setNotice(null);
-
-      const body = {
-        projectId,
-        name: confName,
-        brpLimit,
-        clientKey,
-        clientName,
-        items: calc.items.map(i => ({
-          project_unit_type_id: i.id,
-          share: i.share,
-          units: i.units,
-          neto_per_unit: i.netoPerUnit,
-          brp_per_unit: i.brpPerUnit,
-        }))
-      };
-
-      const res = await fetch(`/api/save?t=${encodeURIComponent(token)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j?.error || "Greška pri spremanju");
-
-      setNotice("Konfiguracija spremljena.");
-      await fetchConfs(); // osvježi listu
-    } catch (e:any) {
-      setNotice(`Greška pri spremanju: ${e?.message ?? e}`);
-    } finally {
-      setSaving(false);
-      setTimeout(()=>setNotice(null),3500);
-    }
+async function saveClientConfig() {
+  if (!canEdit || !token) { 
+    setNotice("Read-only link – spremanje nije dozvoljeno.");
+    setTimeout(()=>setNotice(null),3000);
+    return;
   }
+  try {
+    const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
+    const confName = window.prompt("Naziv konfiguracije:", defaultName);
+    if (!confName) return;
+
+    localStorage.setItem('client_name', clientName || '');
+
+    setSaving(true); setNotice(null);
+
+    const body = {
+      projectId,
+      name: confName,
+      brpLimit,
+      clientKey,
+      clientName,
+      items: calc.items.map(i => ({
+        project_unit_type_id: i.id,
+        share: i.share,
+        units: i.units,
+        neto_per_unit: i.netoPerUnit,
+        brp_per_unit: i.brpPerUnit,
+      }))
+    };
+
+    const res = await fetch(`/api/save?t=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j?.error || "Greška pri spremanju");
+
+    setNotice("Konfiguracija spremljena.");
+    await fetchConfs(); // osvježi listu
+  } catch (e:any) {
+    setNotice(`Greška pri spremanju: ${e?.message ?? e}`);
+  } finally {
+    setSaving(false);
+    setTimeout(()=>setNotice(null),3500);
+  }
+}
+
+  
 
   async function loadConfig(conf: ConfRow) {
     try {
@@ -377,12 +344,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         const next = prev.map(t => {
           const row = byId.get(t.id);
           if (!row) return t;
-
-          // clamp prema bazi (ili fallback rangu)
-          const [fbMin, fbMax] = fallbackRange(t.code);
-          const minN = (t.neto_min ?? fbMin);
-          const maxN = (t.neto_max ?? fbMax);
-
+          const [minN, maxN] = netoRange(t.code);
           const netoClamped = Math.max(minN, Math.min(maxN, Math.round(Number(row.neto_per_unit) || t.neto)));
           const bpu = Math.max(1, Math.round(netoClamped / RATIO));
           const share = (Math.max(0, Math.round(Number(row.units) || 0)) * bpu) / Math.max(1, (conf.brp_limit ?? brpLimit)) * 100;
@@ -398,7 +360,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
       setTimeout(()=>setNotice(null),3500);
     }
   }
-
   async function deleteConfig(conf: ConfRow) {
     if (!canEdit) { setNotice("Read-only link – brisanje nije dozvoljeno."); setTimeout(()=>setNotice(null),3000); return; }
     if (!clientKey || conf.client_key !== clientKey) return;
@@ -419,7 +380,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
       setTimeout(() => setNotice(null), 3500);
     }
   }
-
   async function renameConfig(c: ConfRow) {
     if (!canEdit) { setNotice("Read-only link – preimenovanje nije dozvoljeno."); setTimeout(()=>setNotice(null),3000); return; }
     const current = c.name || "Konfiguracija";
@@ -483,7 +443,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* KONFIGURACIJE — DESKTOP GORE */}
+      {/* KONFIGURACIJE — DESKTOP GORE (skriveno na mobitelu) */}
       <section className="card hidden md:block">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold">Sačuvane konfiguracije</h3>
@@ -529,7 +489,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         )}
       </section>
 
-      {/* SAŽETAK + GRAFOVI (nepromijenjeni izgled) */}
+      {/* SAŽETAK + GRAFOVI */}
       <section className="card">
         <h3 className="font-semibold mb-2">Sažetak</h3>
         <div className="grid gap-4 md:grid-cols-3">
@@ -575,15 +535,13 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
-      {/* TIPOVI — UI i ponašanje zadržani; rasponi sada iz baze (s fallbackom) */}
+      {/* TIPOVI — mobile-first; na desktopu poravnanje preko istog 2-col grida */}
       <section className="card">
         <h3 className="font-semibold mb-2">Struktura po tipu</h3>
         <div className="grid gap-6">
           {calc.items.map((i, idx) => {
             const t = types[idx];
-            const [fbMin, fbMax] = fallbackRange(t.code);
-            const minN = (t.neto_min ?? fbMin);
-            const maxN = (t.neto_max ?? fbMax);
+            const [minN, maxN] = netoRange(t.code);
             const color = COLORS[idx % COLORS.length];
 
             // BRP zaključanih drugih tipova (stvarna ograničenja)
@@ -594,6 +552,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
             // VIZUALNI MAKSIMUM JE STALAN (da se ništa ne miče kod lock/unlock)
             const visualMax = Math.max(i.units, Math.floor(brpLimit / i.brpPerUnit));
 
+            // obojana traka (fallback uz accent-color)
             const fillPct = visualMax > 0 ? Math.round((i.units / visualMax) * 100) : 0;
             const sliderStyle: React.CSSProperties = {
               accentColor: color,
@@ -643,7 +602,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
                       </div>
                     )}
                   </div>
-                  <div className="text-xs text-gray-500 mb-2">{t.desc || fallbackDesc(t.code)}</div>
+                  <div className="text-xs text-gray-500 mb-2">{t.desc || defaultDesc(t.code)}</div>
 
                   {/* NETO: samo − / + (korak 1 m²) */}
                   <div className="flex flex-col gap-2">
@@ -732,7 +691,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
-      {/* KONFIGURACIJE — MOBITEL DOLJE */}
+      {/* KONFIGURACIJE — MOBITEL DOLJE (skriveno na desktopu) */}
       <section className="card md:hidden">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold">Sačuvane konfiguracije</h3>

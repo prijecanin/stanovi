@@ -1,5 +1,10 @@
-// middleware.ts
 import { NextRequest, NextResponse } from "next/server";
+
+const PUBLIC_FILES = new Set([
+  "/favicon.ico",
+  "/robots.txt",
+  "/sitemap.xml",
+]);
 
 function unauthorized() {
   return new NextResponse("Auth required", {
@@ -11,7 +16,16 @@ function unauthorized() {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Zaključaj root ("/"), /admin i /api/admin
+  // Preskoči Next interne i javne statičke fajlove
+  if (
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/static") ||
+    PUBLIC_FILES.has(pathname)
+  ) {
+    return NextResponse.next();
+  }
+
+  // Što zaključavamo
   const needsAuth =
     pathname === "/" ||
     pathname.startsWith("/admin") ||
@@ -28,10 +42,13 @@ export function middleware(req: NextRequest) {
     }
   }
 
-  return NextResponse.next();
+  // DEBUG: dodaj header da potvrdimo da middleware radi i na rootu
+  const res = NextResponse.next();
+  res.headers.set("x-mw", "hit");
+  return res;
 }
 
-// Dodaj "/" u matcher da pokrije root rutu
+// Matchaj SVE rute; filtriramo unutar koda gore.
 export const config = {
-  matcher: ["/", "/admin/:path*", "/api/admin/:path*"],
+  matcher: "/:path*",
 };

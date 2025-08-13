@@ -1,3 +1,4 @@
+// middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 
 function unauthorized() {
@@ -10,8 +11,13 @@ function unauthorized() {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Zaključaj sve što počinje s /admin ili /api/admin
-  if (pathname.startsWith("/admin") || pathname.startsWith("/api/admin")) {
+  // Zaključaj root ("/"), /admin i /api/admin
+  const needsAuth =
+    pathname === "/" ||
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/api/admin");
+
+  if (needsAuth) {
     const auth = req.headers.get("authorization") || "";
     const [scheme, encoded] = auth.split(" ");
     if (scheme !== "Basic" || !encoded) return unauthorized();
@@ -25,7 +31,7 @@ export function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-// Middleware se aktivira samo na ovim putanjama
+// Dodaj "/" u matcher da pokrije root rutu
 export const config = {
-  matcher: ["/admin/:path*", "/api/admin/:path*"],
+  matcher: ["/", "/admin/:path*", "/api/admin/:path*"],
 };

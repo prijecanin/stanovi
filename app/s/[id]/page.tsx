@@ -82,7 +82,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
   const [err, setErr] = useState<string|null>(null);
 
   const [clientKey, setClientKey] = useState<string>('');
-  const [clientName, setClientName] = useState<string>(''); // zadržano u stanju (ne prikazujemo polje)
+  const [clientName, setClientName] = useState<string>(''); // držimo u stanju (ne prikazujemo input)
 
   const [confs, setConfs] = useState<ConfRow[]>([]);
   const [loadingConfs, setLoadingConfs] = useState(false);
@@ -253,7 +253,6 @@ export default function SharePage({ params }: { params: { id: string } }) {
       const confName = window.prompt("Naziv konfiguracije:", defaultName);
       if (!confName) return;
 
-      // ne prikazujemo input, ali i dalje spremamo (prazno ako ga nema)
       localStorage.setItem('client_name', clientName || '');
 
       setSaving(true); setNotice(null);
@@ -400,8 +399,8 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* KONFIGURACIJE */}
-      <section className="card">
+      {/* KONFIGURACIJE — DESKTOP GORE (skriveno na mobitelu) */}
+      <section className="card hidden md:block">
         <div className="flex items-center justify-between mb-2">
           <h3 className="font-semibold">Sačuvane konfiguracije</h3>
           <div className="text-xs text-gray-500">{loadingConfs ? "Učitavanje…" : `(${confs.length})`}</div>
@@ -639,6 +638,50 @@ export default function SharePage({ params }: { params: { id: string } }) {
             {saving ? "Spremam…" : "Spremi moju konfiguraciju"}
           </button>
         </div>
+      </section>
+
+      {/* KONFIGURACIJE — MOBITEL DOLJE (skriveno na desktopu) */}
+      <section className="card md:hidden">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold">Sačuvane konfiguracije</h3>
+          <div className="text-xs text-gray-500">{loadingConfs ? "Učitavanje…" : `(${confs.length})`}</div>
+        </div>
+        {confs.length === 0 ? (
+          <div className="text-sm text-gray-500">Još nema sačuvanih konfiguracija.</div>
+        ) : (
+          <div className="grid gap-2">
+            {confs.map(c => {
+              const mine = !!clientKey && c.client_key === clientKey;
+              return (
+                <div key={c.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between border rounded-xl px-3 py-2 gap-2">
+                  <div className="text-sm">
+                    <div className="font-medium break-words">{c.name}</div>
+                    <div className="text-gray-500">
+                      {new Date(c.created_at).toLocaleString('hr-HR')} • {c.source === 'client' ? (c.client_name || 'klijent') : 'admin'}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={()=>loadConfig(c)} className="px-3 py-1 rounded-lg border hover:bg-gray-50">Učitaj</button>
+                    <button
+                      onClick={()=>mine && renameConfig(c)}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border ${mine?'hover:bg-gray-50':'opacity-50 cursor-not-allowed'}`}
+                    >
+                      Preimenuj
+                    </button>
+                    <button
+                      onClick={()=>mine && deleteConfig(c)}
+                      disabled={!mine}
+                      className={`px-3 py-1 rounded-lg border bg-red-600 text-white ${mine?'hover:opacity-90':'opacity-50 cursor-not-allowed'}`}
+                    >
+                      Obriši
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );

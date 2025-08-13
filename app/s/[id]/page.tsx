@@ -82,7 +82,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
   const [err, setErr] = useState<string|null>(null);
 
   const [clientKey, setClientKey] = useState<string>('');
-  const [clientName, setClientName] = useState<string>('');
+  const [clientName, setClientName] = useState<string>(''); // zadržano u stanju (ne prikazujemo polje)
 
   const [confs, setConfs] = useState<ConfRow[]>([]);
   const [loadingConfs, setLoadingConfs] = useState(false);
@@ -253,6 +253,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
       const confName = window.prompt("Naziv konfiguracije:", defaultName);
       if (!confName) return;
 
+      // ne prikazujemo input, ali i dalje spremamo (prazno ako ga nema)
       localStorage.setItem('client_name', clientName || '');
 
       setSaving(true); setNotice(null);
@@ -376,17 +377,10 @@ export default function SharePage({ params }: { params: { id: string } }) {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div className="flex flex-col md:flex-row md:items-end gap-3 md:gap-4">
           <h2 className="text-xl font-semibold leading-none">{name}</h2>
-          <label className="text-xs text-gray-500 flex items-center gap-2">
-            <span>Moje ime (opcionalno)</span>
-            <input
-              className="px-2 py-1 border rounded-lg w-40 sm:w-56"
-              value={clientName}
-              onChange={e=>setClientName(e.target.value)}
-              placeholder="npr. Ivan / Invest A"
-            />
-          </label>
         </div>
-        <div className="flex flex-wrap items-center gap-2 md:gap-3">
+
+        {/* Desktop: akcije gore desno */}
+        <div className="hidden md:flex flex-wrap items-center gap-2 md:gap-3">
           <div className="text-sm text-gray-500">BRP stambenog dijela zgrade</div>
           <div className="px-3 py-2 border rounded-xl w-28 sm:w-32 md:w-40 text-right">{fmt0(brpLimit)}</div>
           <button onClick={exportXLS} className="px-3 py-2 rounded-xl border">Preuzmi XLS</button>
@@ -528,13 +522,12 @@ export default function SharePage({ params }: { params: { id: string } }) {
               setTypes(prev => {
                 const curr = prev.find(x=>x.id===t.id);
                 if (!curr) return prev;
-                // pokušaj zaključavanja?
                 if (!curr.locked) {
                   const lockedCount = prev.filter(x=>x.locked).length;
                   if (lockedCount >= 2) {
                     setLockTipId(t.id);
                     setTimeout(()=>setLockTipId(null), 2000);
-                    return prev; // blokiraj
+                    return prev; // blokiraj treći
                   }
                 }
                 return prev.map(x => x.id===t.id ? ({...x, locked: !x.locked}) : x);
@@ -631,6 +624,20 @@ export default function SharePage({ params }: { params: { id: string } }) {
 
         <div className="mt-4 text-right text-sm text-slate-700">
           Ukupno stanova: <b>{fmt0(calc.items.reduce((s,i)=>s+i.units,0))}</b>
+        </div>
+
+        {/* Mobile: akcije na dnu ispod tipova */}
+        <div className="md:hidden mt-6 flex flex-col gap-2">
+          <div className="text-sm text-gray-500">BRP stambenog dijela zgrade</div>
+          <div className="px-3 py-2 border rounded-xl w-full text-right">{fmt0(brpLimit)}</div>
+          <button onClick={exportXLS} className="px-3 py-2 rounded-xl border w-full">Preuzmi XLS</button>
+          <button
+            onClick={saveClientConfig}
+            disabled={saving}
+            className={`px-3 py-2 rounded-xl text-white w-full ${saving?"bg-gray-400":"bg-black hover:opacity-90"}`}
+          >
+            {saving ? "Spremam…" : "Spremi moju konfiguraciju"}
+          </button>
         </div>
       </section>
     </main>

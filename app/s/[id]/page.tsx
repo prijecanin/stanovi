@@ -10,7 +10,7 @@ import {
 /* =================== Helpers & konstante =================== */
 
 const RATIO = 0.65;
-const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444','#8b5cf6','#14b8a6'] as const;
+const COLORS = ['#2563eb','#f59e0b','#10b981','#ef4444'] as const; // 1S..4S
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
 type TypeState = { id:string; code:string; neto:number; share:number; locked?: boolean; desc?: string };
@@ -202,13 +202,16 @@ export default function SharePage({ params }: { params: { id: string } }) {
       return normalized;
     });
   }
-  function changeNeto(id: string, raw: string) {
+  function changeNetoRange(id: string, value: number) {
+    setTypes(prev => prev.map(x => x.id===id ? { ...x, neto: Math.round(value) } : x));
+  }
+  function changeNetoStep(id: string, delta: number) {
     setTypes(prev => {
-      const t = prev.find(x => x.id === id);
+      const t = prev.find(x => x.id===id);
       if (!t) return prev;
       const [minN, maxN] = netoRange(t.code);
-      const n = Math.max(minN, Math.min(maxN, Math.round(Number(raw) || t.neto)));
-      return prev.map(x => x.id===id ? { ...x, neto: n } : x);
+      const next = Math.max(minN, Math.min(maxN, Math.round(t.neto + delta)));
+      return prev.map(x => x.id===id ? { ...x, neto: next } : x);
     });
   }
 
@@ -240,7 +243,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
     } catch {}
   }
 
-  /* --- klijent konfiguracije --- */
+  /* --- klijent konfiguracije (save/load/rename/delete) --- */
   async function saveClientConfig() {
     try {
       const defaultName = `Konfiguracija ${new Date().toLocaleString('hr-HR')}`;
@@ -490,7 +493,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
-      {/* TIPOVI — mobile-first layout, slider popunjava širinu na većim ekranima */}
+      {/* TIPOVI — mobile-first layout, šareni slideri */}
       <section className="card">
         <h3 className="font-semibold mb-2">Struktura po tipu</h3>
         <div className="grid gap-6">
@@ -499,14 +502,17 @@ export default function SharePage({ params }: { params: { id: string } }) {
             const [minN, maxN] = netoRange(t.code);
             const color = COLORS[idx % COLORS.length];
 
+            // maksimum dozvoljen na temelju preostalog BRP-a + zaključavanja
+            const brpLocked = calc.items.filter((x,k)=>k!==idx && x.locked)
+              .reduce((s,x)=>s + x.units * x.brpPerUnit, 0);
+            const brpFree = Math.max(0, brpLimit - brpLocked);
+            const maxUnits = Math.max(0, Math.floor(brpFree / i.brpPerUnit));
+
             return (
-              <div
-                key={t.id}
-                className="grid gap-3 md:grid-cols-12 md:items-center"
-              >
-                {/* Lijevi blok: oznaka + opis + NETO unos */}
+              <div key={t.id} className="grid gap-3 md:grid-cols-12 md:items-center">
+                {/* Lijevi blok: oznaka + opis + NETO kontrola */}
                 <div className="md:col-span-6">
-                  <div className="flex items-center gap-3 mb-1">
+                  <div className="flex items-center gap-3">
                     <div className="text-lg font-bold w-10">{t.code}</div>
                     <button
                       onClick={()=>setTypes(prev=>prev.map(x=>x.id===t.id?({...x,locked:!x.locked}):x))}
@@ -518,26 +524,40 @@ export default function SharePage({ params }: { params: { id: string } }) {
                   </div>
                   <div className="text-xs text-gray-500 mb-2">{t.desc || defaultDesc(t.code)}</div>
 
-                  <div className="grid grid-cols-2 gap-3 items-end">
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">NETO po stanu (m²)</div>
+                  {/* NETO: minus / value / plus + mini slider (step 1 m²) */}
+                  <div className="flex flex-col gap-2">
+                    <div className="text-xs text-gray-500">NETO po stanu (m²)</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={()=>changeNetoStep(t.id, -1)}
+                        className="px-2 py-1 rounded-md border"
+                        aria-label="Smanji NETO"
+                      >−</button>
+                      <div className="px-3 py-1 rounded-md border min-w-[52px] text-center font-medium">
+                        {fmt0(t.neto)}
+                      </div>
+                      <button
+                        onClick={()=>changeNetoStep(t.id, +1)}
+                        className="px-2 py-1 rounded-md border"
+                        aria-label="Povećaj NETO"
+                      >+</button>
                       <input
-                        className="px-3 py-2 border rounded-xl w-full"
-                        type="number"
+                        className="ml-2 flex-1"
+                        type="range"
                         min={minN}
                         max={maxN}
+                        step={1}
                         value={t.neto}
-                        onChange={e=>changeNeto(t.id, e.target.value)}
+                        onChange={(e)=>changeNetoRange(t.id, Number(e.target.value))}
+                        style={{ accentColor: color }}
+                        aria-label="NETO slider"
                       />
-                      <div className="text-[11px] text-gray-500 mt-1">[{minN}–{maxN}]</div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²
-                    </div>
+                    <div className="text-[11px] text-gray-500">[{minN}–{maxN}] • BRP po stanu: <b>{fmt0(i.brpPerUnit)}</b> m²</div>
                   </div>
                 </div>
 
-                {/* Desni blok: slider + broj stanova + udio */}
+                {/* Desni blok: slider udjela (broj stanova) */}
                 <div className="md:col-span-6">
                   <div className="flex items-baseline justify-between">
                     <div className="text-xs text-gray-500">
@@ -551,15 +571,16 @@ export default function SharePage({ params }: { params: { id: string } }) {
                     className="w-full mt-2"
                     type="range"
                     min={0}
-                    max={Math.max(0, Math.floor(brpLimit / i.brpPerUnit))}
+                    max={maxUnits}
                     step={1}
                     value={i.units}
                     onChange={(e)=>changeUnits(t.id, Number(e.target.value))}
                     style={{ accentColor: color }}
+                    aria-label="Broj stanova"
                   />
                 </div>
 
-                {/* Neto/Brp ukupno (mobitel ispod, desktop u istoj liniji) */}
+                {/* Neto/Brp ukupno */}
                 <div className="md:col-span-12 grid grid-cols-2 gap-3 text-xs text-slate-700">
                   <div>NETO: <b>{fmt0(i.netoPerUnit * i.units)}</b> m²</div>
                   <div>BRP: <b>{fmt0(i.achievedBrp)}</b> m²</div>

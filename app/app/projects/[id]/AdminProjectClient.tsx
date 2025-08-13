@@ -8,11 +8,13 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from "recharts";
 
-type LinkAction = (state: any, formData: FormData) => Promise<{ link?: string; error?: string }>;
+type LinkAction = (state: any, formData: FormData) => Promise<{ link?: string; error?: string; shortUrl?: string }>;
 type Props = {
   paramsId: string;
   makeViewLink: LinkAction;
   makeEditLink: LinkAction;
+  makeShortViewLink: LinkAction;  // NOVO
+  makeShortEditLink: LinkAction;  // NOVO
 };
 
 const RATIO = 0.65;
@@ -23,7 +25,17 @@ type Snapshot = { id: string; name: string; created_at: string; brp_limit: numbe
 
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
-/** poziv server‑akcije + kopiranje linka */
+// helper: slugify
+function slugify(s: string) {
+  return s
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+/** server‑akcija + kopiranje dugog linka */
 function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
@@ -42,13 +54,39 @@ function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit"
       const msg = e?.message || String(e);
       setErr(msg);
       copyNotice(`Greška: ${msg}`);
-      console.error("generate link error:", msg);
     } finally { setBusy(false); }
   }
   return { run, busy, err };
 }
 
-export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLink }: Props) {
+/** server‑akcija + kreiranje kratkog linka i kopiranje */
+function useCreateShort(action: LinkAction, projectId: string, scope: "view"|"edit") {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string|null>(null);
+  async function run(slugIn: string, notify: (m:string)=>void) {
+    if (!projectId) { notify("Nedostaje projectId."); return; }
+    const slug = slugify(slugIn);
+    if (!slug) { notify("Upiši kratko ime (slug)."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const fd = new FormData();
+      fd.set("projectId", projectId);
+      fd.set("slug", slug);
+      const res = await action({}, fd);
+      if (res?.error) throw new Error(res.error);
+      if (!res?.shortUrl) throw new Error("Server nije vratio shortUrl.");
+      await navigator.clipboard.writeText(res.shortUrl);
+      notify(`Kratki ${scope.toUpperCase()} link kopiran: ${res.shortUrl}`);
+    } catch (e:any) {
+      const msg = e?.message || String(e);
+      setErr(msg);
+      notify(`Greška: ${msg}`);
+    } finally { setBusy(false); }
+  }
+  return { run, busy, err };
+}
+
+export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLink, makeShortViewLink, makeShortEditLink }: Props) {
   const [name, setName] = useState("Projekt");
   const [brpLimit, setBrpLimit] = useState(12500);
   const [types, setTypes] = useState<UnitType[]>([]);
@@ -66,9 +104,13 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
-  // gumbi za linkove
-  const copyView = useCopyLink(makeViewLink, projectId || "", "view");
-  const copyEdit = useCopyLink(makeEditLink, projectId || "", "edit");
+  // linkovi
+  const copyView  = useCopyLink(makeViewLink,  projectId || "", "view");
+  const copyEdit  = useCopyLink(makeEditLink,  projectId || "", "edit");
+  const shortView = useCreateShort(makeShortViewLink, projectId || "", "view");
+  const shortEdit = useCreateShort(makeShortEditLink, projectId || "", "edit");
+
+  const [slug, setSlug] = useState("");
 
   // ---------- FETCH: projekt + tipovi ----------
   useEffect(() => {
@@ -103,7 +145,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     return () => { alive = false; };
   }, [paramsId]);
 
-  // ---------- FETCH: liste konfiguracija ----------
+  // ---------- FETCH: konfiguracije ----------
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
@@ -336,43 +378,30 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
     <main className="grid gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <Link
-            href="/app/projects"
-            className="text-sm text-blue-600 hover:underline"
-            title="Natrag na listu projekata"
-          >
+          <Link href="/app/projects" className="text-sm text-blue-600 hover:underline" title="Natrag na listu projekata">
             ← Projekti
           </Link>
-
           <div className="text-sm text-gray-500 mt-1">Projekt</div>
 
           {!editingName ? (
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-semibold">{name}</h2>
-              <button
-                className="px-2 py-1 rounded-lg border text-xs"
-                onClick={()=>{ setEditingName(true); setNameDraft(name); }}
-                title="Preimenuj projekt"
-              >
+              <button className="px-2 py-1 rounded-lg border text-xs" onClick={()=>{ setEditingName(true); setNameDraft(name); }} title="Preimenuj projekt">
                 Uredi
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <input
-                className="px-3 py-2 border rounded-xl"
-                value={nameDraft}
-                autoFocus
-                onChange={e=>setNameDraft(e.target.value)}
-                onKeyDown={e=>{ if (e.key==='Enter') saveProjectName(); if (e.key==='Escape'){ setEditingName(false); setNameDraft(name); } }}
-              />
+              <input className="px-3 py-2 border rounded-xl" value={nameDraft} autoFocus
+                     onChange={e=>setNameDraft(e.target.value)}
+                     onKeyDown={e=>{ if (e.key==='Enter') saveProjectName(); if (e.key==='Escape'){ setEditingName(false); setNameDraft(name); } }} />
               <button className="px-3 py-2 rounded-xl border bg-black text-white" onClick={saveProjectName}>Spremi</button>
               <button className="px-3 py-2 rounded-xl border" onClick={()=>{ setEditingName(false); setNameDraft(name); }}>Odustani</button>
             </div>
           )}
         </div>
 
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
           <div className="text-sm text-gray-500">BRP stambenog dijela zgrade</div>
           <input className="px-3 py-2 border rounded-xl w-40" type="number" value={brpLimit} onChange={e=>setBrpLimit(Number(e.target.value)||0)} />
           <button onClick={exportXLS} className="px-4 py-2 rounded-xl border">Preuzmi XLS</button>
@@ -385,23 +414,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
             {saving ? "Spremam…" : "Spremi konfiguraciju"}
           </button>
 
-          {/* stari javni (read‑only) link po želji */}
-          <button
-            onClick={() => {
-              if (!projectId) return;
-              const url = `${window.location.origin}/s/${projectId}`;
-              navigator.clipboard.writeText(url).then(
-                () => { setNotice("Link za klijenta je kopiran u clipboard."); setTimeout(()=>setNotice(null), 2500); },
-                () => { setNotice("Ne mogu kopirati link. Probaj ručno."); setTimeout(()=>setNotice(null), 3500); },
-              );
-            }}
-            className="px-4 py-2 rounded-xl border"
-            title="Kopiraj javni read-only link"
-          >
-            Kopiraj link (view – bez uređivanja)
-          </button>
-
-          {/* NOVO: token linkovi */}
+          {/* dugi token linkovi */}
           <button
             disabled={!projectId || copyView.busy}
             onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
@@ -410,7 +423,6 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
           >
             {copyView.busy ? "…" : "Kopiraj VIEW link"}
           </button>
-
           <button
             disabled={!projectId || copyEdit.busy}
             onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
@@ -419,6 +431,35 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
           >
             {copyEdit.busy ? "…" : "Kopiraj EDIT link"}
           </button>
+
+          {/* kratki linkovi */}
+          <div className="flex items-end gap-2">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500">Kratko ime (slug)</label>
+              <input
+                className="px-3 py-2 border rounded-xl w-48"
+                placeholder="npr. ivan"
+                value={slug}
+                onChange={e=>setSlug(slugify(e.target.value))}
+              />
+            </div>
+            <button
+              disabled={!projectId || shortView.busy}
+              onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+              className="px-4 py-2 rounded-xl border"
+              title="Kreiraj i kopiraj KRATKI VIEW link (r/{slug})"
+            >
+              {shortView.busy ? "…" : "Kratki VIEW"}
+            </button>
+            <button
+              disabled={!projectId || shortEdit.busy}
+              onClick={()=> shortEdit.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); })}
+              className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
+              title="Kreiraj i kopiraj KRATKI EDIT link (r/{slug})"
+            >
+              {shortEdit.busy ? "…" : "Kratki EDIT"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -473,7 +514,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
                     <div className="text-xs text-gray-500">Udio (%) <b className="text-slate-700">{Math.round(t.share)}%</b></div>
                     <div className="text-xs text-slate-700">Broj stanova: <b>{fmt0(i.units)}</b></div>
                   </div>
-                  <input className="w-full mt-2" type="range" min={0} max={maxUnits} step={1} value={i.units} onChange={e=>changeUnits(t.id, Number(e.target.value))} style={{accentColor:COLORS[idx%COLORS.length]}} />
+                  <input className="w-full mt-2" type="range" min={0} max={maxUnits} step={1} value={i.units} onChange={e=>changeUnits(t.id, Number(e.target.value))} />
                 </div>
                 <div>
                   <div className="text-xs text-slate-700">NETO: <b>{fmt0(i.netoPerUnit*i.units)}</b> m²</div>
@@ -498,7 +539,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart margin={{ top:8, right:8, bottom:32, left:8 }}>
                   <Pie data={types.map((t,i)=>({name:t.code, value:Math.round(t.share)}))} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2}>
-                    {types.map((_,idx)=><Cell key={idx} fill={COLORS[idx%COLORS.length]} />)}
+                    {types.map((_,idx)=><Cell key={idx} />)}
                   </Pie>
                   <Tooltip formatter={(v:any)=>`${v}%`} />
                   <Legend verticalAlign="bottom" height={24} />
@@ -515,7 +556,7 @@ export default function AdminProjectClient({ paramsId, makeViewLink, makeEditLin
                   <YAxis allowDecimals={false} tickLine={false} />
                   <Tooltip />
                   <Bar dataKey="units" radius={[8,8,0,0]}>
-                    {barData.map((e,idx)=><Cell key={idx} fill={e.color} />)}
+                    {barData.map((_,idx)=><Cell key={idx} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

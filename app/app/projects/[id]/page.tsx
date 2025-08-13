@@ -11,20 +11,23 @@ export default function Page({ params }: { params: { id: string } }) {
     return `${proto}://${host}`;
   }
 
-  const makeLink = (scope: "view"|"edit") => {
+  const makeLink = (scope: "view" | "edit") => {
     return async (_: any, formData: FormData) => {
       "use server";
       try {
-        const projectId = String(formData.get("projectId") || "").trim();
-        if (!projectId) return { error: "projectId obavezan." };
+        // prihvati iz forme ili padni na params.id
+        const formPid = String(formData.get("projectId") || "").trim();
+        const projectId = formPid || params.id;
+
+        if (!projectId) return { error: "projectId nedostaje." };
         if (!process.env.LINK_SECRET) return { error: "LINK_SECRET nije postavljen." };
 
         // TTL po želji (7 dana)
-        const token = await makeShareToken({ projectId, scope }, 7*24*3600);
+        const token = await makeShareToken({ projectId, scope }, 7 * 24 * 3600);
         const link = `${getOrigin()}/s/${encodeURIComponent(projectId)}?t=${encodeURIComponent(token)}`;
         return { link };
-      } catch (e:any) {
-        return { error: e?.message || "Greška pri generiranju linka." };
+      } catch (e: any) {
+        return { error: e?.message || "Neočekivana greška pri generiranju linka." };
       }
     };
   };

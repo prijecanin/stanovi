@@ -2,7 +2,7 @@
 import { headers } from "next/headers";
 import AdminProjectClient from "./AdminProjectClient";
 import { createClient } from "@supabase/supabase-js";
-import { makeShareToken } from "../../../../lib/tokens"; // <-- promijenjeno iz @/lib/tokens
+import { makeShareToken } from "../../../../lib/tokens";
 
 function getOrigin() {
   const h = headers();
@@ -21,7 +21,6 @@ const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
       const projectId = formPid || paramsId;
       if (!projectId) return { error: "projectId nedostaje." };
 
-      // provjera da je secret postavljen (isti kao u tokens.ts)
       if (
         !process.env.SHARE_TOKEN_SECRET &&
         !process.env.JWT_SECRET &&
@@ -189,6 +188,50 @@ const deleteUnitType = async (_: any, formData: FormData) => {
   }
 };
 
+/* --------- NOVO: server akcije za BRP i konfiguracije --------- */
+const saveProjectBrp = async (_: any, formData: FormData) => {
+  "use server";
+  try {
+    const projectId = String(formData.get("projectId") || "");
+    const brp_limit = Number(formData.get("brp_limit") || "");
+    if (!projectId) return { error: "projectId nedostaje." };
+    if (!Number.isFinite(brp_limit) || brp_limit <= 0) return { error: "Neispravan BRP." };
+
+    const SUPABASE_URL = process.env.SUPABASE_URL!;
+    const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
+    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } });
+
+    const { error } = await admin.from("projects").update({ brp_limit }).eq("id", projectId);
+    if (error) return { error: error.message };
+    return { ok: true };
+  } catch (e:any) {
+    return { error: e?.message || "Greška pri spremanju BRP-a." };
+  }
+};
+
+const deleteConfiguration = async (_: any, formData: FormData) => {
+  "use server";
+  try {
+    const configId = String(formData.get("id") || "");
+    if (!configId) return { error: "Nedostaje id konfiguracije." };
+
+    const SUPABASE_URL = process.env.SUPABASE_URL!;
+    const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
+    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, { auth: { persistSession: false } });
+
+    // prvo obriši stavke (ako nema ON DELETE CASCADE)
+    const { error: e1 } = await admin.from("configuration_items").delete().eq("configuration_id", configId);
+    if (e1) return { error: e1.message };
+    // zatim samu konfiguraciju
+    const { error: e2 } = await admin.from("configurations").delete().eq("id", configId);
+    if (e2) return { error: e2.message };
+
+    return { ok: true };
+  } catch (e:any) {
+    return { error: e?.message || "Greška pri brisanju konfiguracije." };
+  }
+};
+
 export default function Page({ params }: { params: { id: string } }) {
   return (
     <AdminProjectClient
@@ -199,6 +242,8 @@ export default function Page({ params }: { params: { id: string } }) {
       makeShortEditLink={makeShortFactory(params.id, "edit")}
       upsertUnitTypes={upsertUnitTypes}
       deleteUnitType={deleteUnitType}
+      saveProjectBrp={saveProjectBrp}
+      deleteConfiguration={deleteConfiguration}
     />
   );
 }

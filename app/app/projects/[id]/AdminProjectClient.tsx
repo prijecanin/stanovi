@@ -15,10 +15,14 @@ type Props = {
   paramsId: string;
   makeViewLink: LinkAction;
   makeEditLink: LinkAction;
-  makeShortViewLink: LinkAction; // radi kompatibilnosti (ne koristimo)
-  makeShortEditLink: LinkAction; // —||—
+  makeShortViewLink: LinkAction;
+  makeShortEditLink: LinkAction;
   upsertUnitTypes: ServerAction;
   deleteUnitType: ServerAction;
+
+  // NOVO:
+  saveProjectBrp: ServerAction;
+  deleteConfiguration: ServerAction;
 };
 
 const RATIO = 0.65;
@@ -120,7 +124,7 @@ function useCreateShortAPI(projectId: string, scope: "view"|"edit") {
   return { run, busy, err };
 }
 
-/* -------------------- Hook za DUGE linkove (server akcije – ostaju) -------------------- */
+/* -------------------- Hook za DUGE linkove -------------------- */
 function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
@@ -148,7 +152,8 @@ function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit"
 
 /* -------------------- ADMIN KOMPONENTA -------------------- */
 export default function AdminProjectClient({
-  paramsId, makeViewLink, makeEditLink, makeShortViewLink, makeShortEditLink, upsertUnitTypes, deleteUnitType
+  paramsId, makeViewLink, makeEditLink, makeShortViewLink, makeShortEditLink, upsertUnitTypes, deleteUnitType,
+  saveProjectBrp, deleteConfiguration
 }: Props) {
   const [name, setName] = useState("Projekt");
   const [brpLimit, setBrpLimit] = useState(12500);
@@ -170,11 +175,11 @@ export default function AdminProjectClient({
   const [hours, setHours] = useState<number>(168); // TTL za linkove
   const [slug, setSlug] = useState("");            // slug za kratke linkove
 
-  // dugi linkovi (server akcije)
+  // dugi linkovi
   const copyView  = useCopyLink(makeViewLink,  projectId || "", "view");
   const copyEdit  = useCopyLink(makeEditLink,  projectId || "", "edit");
 
-  // kratki linkovi (API)
+  // kratki linkovi
   const shortView = useCreateShortAPI(projectId || "", "view");
   const shortEdit = useCreateShortAPI(projectId || "", "edit");
 
@@ -368,6 +373,38 @@ export default function AdminProjectClient({
     }
   }
 
+  /* ---------- NOVO: spremanje BRP-a (server akcija) ---------- */
+  async function saveBrpLimit() {
+    if (!projectId) return;
+    const safe = Math.max(1, Math.round(Number(brpLimit) || 0));
+    const fd = new FormData();
+    fd.set("projectId", projectId);
+    fd.set("brp_limit", String(safe));
+    const res = await saveProjectBrp({}, fd);
+    if (res?.error) {
+      setNotice(`Greška pri spremanju BRP-a: ${res.error}`);
+    } else {
+      setBrpLimit(safe);
+      setNotice("BRP spremljen.");
+    }
+    setTimeout(()=>setNotice(null), 2500);
+  }
+
+  /* ---------- NOVO: brisanje konfiguracije (server akcija) ---------- */
+  async function removeConfiguration(id: string) {
+    if (!id) return;
+    if (!confirm("Obrisati konfiguraciju?")) return;
+    const fd = new FormData(); fd.set("id", id);
+    const res = await deleteConfiguration({}, fd);
+    if (res?.error) {
+      setNotice(`Greška pri brisanju: ${res.error}`);
+    } else {
+      setSnapshots(prev => prev.filter(s => s.id !== id));
+      setNotice("Konfiguracija obrisana.");
+    }
+    setTimeout(()=>setNotice(null), 2500);
+  }
+
   if (loading) return <main className="p-4">Učitavanje…</main>;
   if (err)     return <main className="p-4 text-red-700">Greška: {err}</main>;
 
@@ -394,12 +431,30 @@ export default function AdminProjectClient({
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
+          {/* NOVO: BRP editor */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500">BRP stambenog dijela zgrade</label>
+            <div className="flex items-center gap-2">
+              <input
+                className="px-3 py-2 border rounded-xl w-32 text-right"
+                type="number"
+                min={1}
+                value={brpLimit}
+                onChange={e=>setBrpLimit(Math.max(1, Number(e.target.value)||0))}
+              />
+              <button onClick={saveBrpLimit} className="px-3 py-2 rounded-xl border bg-black text-white">
+                Spremi BRP
+              </button>
+            </div>
+          </div>
+
           <div className="flex flex-col gap-1">
             <label className="text-xs text-gray-500">Trajanje tokena (sati)</label>
             <input className="px-3 py-2 border rounded-xl w-28" type="number" min={1}
                    value={hours} onChange={e=>setHours(Math.max(1, Number(e.target.value)||1))}/>
           </div>
-          {/* DUGI linkovi (server akcije – ostaju) */}
+
+          {/* DUGI linkovi */}
           <button disabled={!projectId || copyView.busy}
                   onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
                   className="px-4 py-2 rounded-xl border"> {copyView.busy ? "…" : "Kopiraj VIEW link"} </button>
@@ -407,7 +462,7 @@ export default function AdminProjectClient({
                   onClick={() => projectId && copyEdit.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
                   className="px-4 py-2 rounded-xl border bg-amber-500 text-white"> {copyEdit.busy ? "…" : "Kopiraj EDIT link"} </button>
 
-          {/* KRATKI linkovi (preko API-ja) */}
+          {/* KRATKI linkovi */}
           <div className="flex items-end gap-2">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500">Kratko ime (slug)</label>
@@ -500,6 +555,36 @@ export default function AdminProjectClient({
             Validacija: min ≤ default ≤ max (ako su polja popunjena).
           </div>
         </div>
+      </section>
+
+      {/* ---------------- NOVO – Sačuvane konfiguracije ---------------- */}
+      <section className="card">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold">Sačuvane konfiguracije</h3>
+          <div className="text-xs text-gray-500">{loadingSnaps ? "Učitavanje…" : `(${snapshots.length})`}</div>
+        </div>
+
+        {snapshots.length === 0 ? (
+          <div className="text-sm text-gray-500">Još nema sačuvanih konfiguracija.</div>
+        ) : (
+          <div className="grid gap-2">
+            {snapshots.map(s => (
+              <div key={s.id} className="flex flex-col sm:flex-row sm:items-center sm:justify-between border rounded-xl px-3 py-2 gap-2">
+                <div className="text-sm">
+                  <div className="font-medium break-words">{s.name}</div>
+                  <div className="text-gray-500">
+                    {new Date(s.created_at).toLocaleString('hr-HR')} • BRP {fmt0(s.brp_limit)} • ratio {s.ratio}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={()=>removeConfiguration(s.id)} className="px-3 py-1 rounded-lg border bg-red-600 text-white">
+                    Obriši
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

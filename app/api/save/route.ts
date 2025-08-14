@@ -8,8 +8,9 @@ type ItemRow = {
   project_unit_type_id: string | null;
   units: number;
   neto_per_unit: number | null;
+  brp_per_unit: number;          // NOT NULL u tvojoj shemi
   label: string | null;
-  share: number; // NOT NULL u tvojoj shemi
+  share: number;                  // NOT NULL u tvojoj shemi
 };
 
 export async function POST(req: Request) {
@@ -20,6 +21,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing token (t)." }, { status: 401 });
     }
 
+    // token + scope
     let payload;
     try {
       payload = verifyShareToken(token);
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Insufficient scope (edit required)." }, { status: 403 });
     }
 
-    // Body (JSON ili FormData)
+    // body (JSON ili FormData)
     let body: any = null;
     try {
       body = await req.json();
@@ -62,9 +64,10 @@ export async function POST(req: Request) {
     if (!SUPABASE_URL || !SERVICE_KEY) {
       return NextResponse.json({ error: "Missing Supabase env vars." }, { status: 500 });
     }
+
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-    // Insert u configurations
+    // upis u configurations
     const insertConf: any = {
       project_id: payload.projectId,
       name,
@@ -81,44 +84,44 @@ export async function POST(req: Request) {
       .insert(insertConf)
       .select("id")
       .single();
+    if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
 
-    if (insErr) {
-      return NextResponse.json({ error: insErr.message }, { status: 400 });
-    }
     const configurationId = conf!.id as string;
 
-    // Insert stavki u configuration_items (S ADA share)
+    // upis stavki u configuration_items (SADA uključuje i brp_per_unit)
     if (Array.isArray(body.items) && body.items.length > 0) {
       const rows: ItemRow[] = body.items.map((it: any): ItemRow => {
         const units = Number(it.units) || 0;
         const neto_per_unit =
           it.neto_per_unit != null ? Number(it.neto_per_unit) : null;
 
-        // brp_per_unit: uzmi iz bodyja ako postoji; fallback iz neto_per_unit/ratio
-        const brp_per_unit =
-          it.brp_per_unit != null
-            ? Number(it.brp_per_unit)
-            : neto_per_unit != null
-              ? Math.max(1, Math.round(neto_per_unit / ratio))
-              : null;
+        // odredi brp_per_unit (prioritet: it.brp_per_unit → iz neto/ratio → iz share/brp_limit/units → fallback 1)
+        let brp_per_unit: number;
+        if (it.brp_per_unit != null && Number.isFinite(Number(it.brp_per_unit))) {
+          brp_per_unit = Math.max(1, Math.round(Number(it.brp_per_unit)));
+        } else if (neto_per_unit != null && Number.isFinite(neto_per_unit)) {
+          brp_per_unit = Math.max(1, Math.round(neto_per_unit / ratio));
+        } else if (units > 0 && it.share != null && Number.isFinite(Number(it.share))) {
+          const shareVal = Number(it.share);
+          brp_per_unit = Math.max(1, Math.round((shareVal / 100) * brp_limit / units));
+        } else {
+          brp_per_unit = 1; // sigurni fallback
+        }
 
-        // share: uzmi iz bodyja ako je broj; inače izračunaj iz units/brp_per_unit/brp_limit
-        const shareRaw =
+        // odredi share (prioritet: it.share → iz units/brp_per_unit)
+        const shareCalc =
           it.share != null && Number.isFinite(Number(it.share))
             ? Number(it.share)
-            : brp_per_unit != null && brp_limit > 0
-              ? (units * brp_per_unit) / brp_limit * 100
-              : 0;
+            : (units * brp_per_unit) / brp_limit * 100;
 
-        // zadrži razuman raspon
-        const share = Math.max(0, Math.min(100, Math.round(shareRaw * 100) / 100));
+        const share = Math.max(0, Math.min(100, Math.round(shareCalc * 100) / 100));
 
         return {
           configuration_id: configurationId,
-          project_unit_type_id:
-            it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
+          project_unit_type_id: it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
           units,
           neto_per_unit,
+          brp_per_unit,
           label: typeof it.label === "string" ? it.label : null,
           share,
         };

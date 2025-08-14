@@ -11,15 +11,11 @@ export interface SharePayload {
 function getSecret(): string {
   const s = process.env.SHARE_TOKEN_SECRET || process.env.JWT_SECRET;
   if (!s) {
-    // Namjerno bacamo grešku tek kad se funkcije pozovu (ne na importu modula).
     throw new Error("Missing SHARE_TOKEN_SECRET (or JWT_SECRET) env var.");
   }
   return s;
 }
 
-/**
- * Generira JWT s payloadom { projectId, scope } i rokom trajanja u sekundama.
- */
 export function generateShareToken(
   data: SharePayload,
   ttlSeconds: number
@@ -31,10 +27,6 @@ export function generateShareToken(
   );
 }
 
-/**
- * Validira i vraća payload iz tokena.
- * Baca grešku ako je token nevažeći/istekao ili payload nije očekivan.
- */
 export function verifyShareToken(
   token: string
 ): SharePayload & { exp: number; iat?: number } {
@@ -54,3 +46,6 @@ export function verifyShareToken(
     iat: decoded.iat,
   };
 }
+
+// kompatibilnost sa starim importima:
+export { generateShareToken as makeShareToken };

@@ -10,15 +10,16 @@ export type SharePayload = {
   exp?: number; // unix seconds
 };
 
-// Jedan, centralni secret za potpis/provjeru
-const SECRET =
-  process.env.SHARE_TOKEN_SECRET ||
-  process.env.JWT_SECRET ||
+// --- SECRET: osiguraj da je string (ne undefined) ---
+const SECRET_CANDIDATE =
+  process.env.SHARE_TOKEN_SECRET ??
+  process.env.JWT_SECRET ??
   process.env.NEXTAUTH_SECRET;
 
-if (!SECRET) {
+if (!SECRET_CANDIDATE) {
   throw new Error("SHARE_TOKEN_SECRET (ili JWT/NEXTAUTH_SECRET) nije postavljen.");
 }
+const SECRET: string = SECRET_CANDIDATE; // <-- sada je eksplicitno string
 
 /**
  * Kreira kratkotrajni token za dijeljenje linka (view/edit).

@@ -9,22 +9,19 @@ type ItemRow = {
   units: number;
   neto_per_unit: number | null;
   label: string | null;
-  idx: number;
 };
 
 export async function POST(req: Request) {
   try {
-    // 1) Token iz query stringa (?t=...)
     const url = new URL(req.url);
     const token = url.searchParams.get("t") || "";
     if (!token) {
       return NextResponse.json({ error: "Missing token (t)." }, { status: 401 });
     }
 
-    // 2) Validacija tokena i scope
     let payload;
     try {
-      payload = verifyShareToken(token); // { projectId, scope, exp, ... }
+      payload = verifyShareToken(token);
     } catch {
       return NextResponse.json({ error: "Invalid or expired token." }, { status: 401 });
     }
@@ -32,7 +29,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Insufficient scope (edit required)." }, { status: 403 });
     }
 
-    // 3) Body (JSON ili FormData)
+    // Body (JSON ili FormData)
     let body: any = null;
     try {
       body = await req.json();
@@ -49,12 +46,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Empty body." }, { status: 400 });
     }
 
-    // očekujemo: name, brp_limit/brpLimit, (opcionalno tolerance), (opcionalno ratio), (opcionalno items)
     const name = (body.name ?? body.configName ?? "Konfiguracija").toString().trim() || "Konfiguracija";
     const brp_limit = Number(body.brp_limit ?? body.brpLimit ?? body.brp);
     const tolerance = Number(body.tolerance ?? 50);
-
-    // default ratio ako nije poslan
     const rawRatio = Number(body.ratio);
     const ratio = Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 0.65;
 
@@ -62,7 +56,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid brp_limit." }, { status: 400 });
     }
 
-    // 4) Supabase (service role)
     const SUPABASE_URL = process.env.SUPABASE_URL!;
     const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE!;
     if (!SUPABASE_URL || !SERVICE_KEY) {
@@ -70,7 +63,7 @@ export async function POST(req: Request) {
     }
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-    // 5) Upis u configurations (+ optional meta)
+    // Insert u configurations
     const insertConf: any = {
       project_id: payload.projectId,
       name,
@@ -91,21 +84,18 @@ export async function POST(req: Request) {
     if (insErr) {
       return NextResponse.json({ error: insErr.message }, { status: 400 });
     }
-
     const configurationId = conf!.id as string;
 
-    // 6) Upis stavki u configuration_items
+    // Insert stavki u configuration_items (bez idx kolone)
     if (Array.isArray(body.items) && body.items.length > 0) {
-      const rows: ItemRow[] = body.items.map((it: any, idx: number): ItemRow => ({
+      const rows: ItemRow[] = body.items.map((it: any): ItemRow => ({
         configuration_id: configurationId,
         project_unit_type_id: it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
         units: Number(it.units) || 0,
         neto_per_unit: it.neto_per_unit != null ? Number(it.neto_per_unit) : null,
         label: typeof it.label === "string" ? it.label : null,
-        idx,
       }));
 
-      // type-guard: zadrži samo one s valjanim project_unit_type_id
       const rowsFiltered = rows.filter(
         (r): r is ItemRow & { project_unit_type_id: string } => !!r.project_unit_type_id
       );

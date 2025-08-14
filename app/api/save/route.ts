@@ -1,7 +1,8 @@
+// app/api/save/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-// prilagodi putanju ako ti nije ovako:
-import { verifyShareToken } from "../../../../lib/tokens";
+// ⬇️ ispravljena relativna putanja (tri razine gore do /app, pa /lib/tokens)
+import { verifyShareToken } from "../../../lib/tokens";
 
 export async function POST(req: Request) {
   try {
@@ -31,7 +32,6 @@ export async function POST(req: Request) {
       const fd = await req.formData().catch(() => null);
       if (fd) {
         body = Object.fromEntries(fd.entries());
-        // ako je payload stigao serijaliziran
         if (typeof body.payload === "string") {
           try { body.payload = JSON.parse(body.payload); } catch {}
         }
@@ -41,12 +41,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Empty body." }, { status: 400 });
     }
 
-    // očekujemo barem: name, brp_limit, tolerance, (opcijski ratio), (opcijski items)
+    // očekujemo: name, brp_limit (ili brpLimit), tolerance (opcionalno), ratio (opcionalno), items (opcionalno)
     const name = (body.name ?? body.configName ?? "Konfiguracija").toString().trim() || "Konfiguracija";
     const brp_limit = Number(body.brp_limit ?? body.brpLimit ?? body.brp);
     const tolerance = Number(body.tolerance ?? 50);
 
-    // --- KLJUČNO: ratio default ako nije poslan ---
+    // default ratio ako nije poslan (rješava NOT NULL)
     const rawRatio = Number(body.ratio);
     const ratio = Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 0.65;
 
@@ -81,11 +81,11 @@ export async function POST(req: Request) {
 
     const configurationId = conf!.id as string;
 
-    // 5) (Opcijski) spremi stavke ako ih šalješ: body.items: Array<{unit_type_id, share, neto_default,...}>
+    // 5) (Opcijski) spremi stavke ako ih šalješ
     if (Array.isArray(body.items) && body.items.length > 0) {
       const rows = body.items.map((it: any, idx: number) => ({
         configuration_id: configurationId,
-        unit_type_id: it.unit_type_id ?? it.id ?? null,
+        unit_type_id: it.unit_type_id ?? it.project_unit_type_id ?? it.id ?? null,
         share: Number(it.share) || 0,
         neto_default: it.neto_default != null ? Number(it.neto_default) : null,
         idx

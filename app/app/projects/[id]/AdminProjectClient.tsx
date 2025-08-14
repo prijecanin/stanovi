@@ -8,16 +8,15 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from "recharts";
 
-/** Tipovi server akcija koje već dobivaš iz page.tsx */
-type LinkAction = (state: any, formData: FormData) => Promise<{ link?: string; error?: string }>;
+type LinkAction = (state: any, formData: FormData) => Promise<{ link?: string; error?: string; shortUrl?: string }>;
 type ServerAction = (state: any, formData: FormData) => Promise<{ ok?: boolean; error?: string }>;
 
 type Props = {
   paramsId: string;
-  makeViewLink: LinkAction;            // ostaje
-  makeEditLink: LinkAction;            // ostaje
-  makeShortViewLink?: LinkAction;      // NE koristimo više (zbog API-ja), ali ostavljamo prop
-  makeShortEditLink?: LinkAction;      // -||-
+  makeViewLink: LinkAction;
+  makeEditLink: LinkAction;
+  makeShortViewLink: LinkAction; // ostavljamo u propovima radi kompatibilnosti (ne koristimo)
+  makeShortEditLink: LinkAction; // —||—
   upsertUnitTypes: ServerAction;
   deleteUnitType: ServerAction;
 };
@@ -41,7 +40,6 @@ type Snapshot = { id: string; name: string; created_at: string; brp_limit: numbe
 
 const fmt0 = (n:number)=>new Intl.NumberFormat('hr-HR',{maximumFractionDigits:0}).format(Math.round(n||0));
 
-// slugify helper
 function slugify(s: string) {
   return s
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -49,7 +47,7 @@ function slugify(s: string) {
     .replace(/^-+|-+$/g, "").slice(0, 48);
 }
 
-/* -------------------- helper za Basic Auth (isti kao na /admin/links) -------------------- */
+/* -------------------- Basic Auth helper + API short link helper -------------------- */
 function ensureAdminAuthHeader(force = false): string | null {
   if (!force) {
     const saved = typeof window !== "undefined" ? sessionStorage.getItem("admin_basic_auth") : null;
@@ -64,8 +62,66 @@ function ensureAdminAuthHeader(force = false): string | null {
   return hdr;
 }
 
-/* -------------------- hook: kopiranje DUGOG linka (server akcije ostaju) -------------------- */
-function useCopyLong(action: LinkAction, projectId: string, scope: "view"|"edit") {
+function useCreateShortAPI(projectId: string, scope: "view"|"edit") {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string|null>(null);
+
+  async function run(slugIn: string, notify: (m:string)=>void, hours: number) {
+    if (!projectId) { notify("Nedostaje projectId."); return; }
+    const slug = slugify(slugIn);
+    if (!slug) { notify("Upiši kratko ime (slug)."); return; }
+    const ttl = Math.max(1, Math.round(hours)||1);
+
+    setBusy(true); setErr(null);
+    try {
+      let auth = ensureAdminAuthHeader();
+      if (!auth) throw new Error("Nisu uneseni admin kredencijali.");
+
+      const res = await fetch("/api/admin/create-short-link", {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ projectId, scope, slug, ttlHours: ttl }),
+      });
+
+      if (res.status === 401) {
+        sessionStorage.removeItem("admin_basic_auth");
+        auth = ensureAdminAuthHeader(true);
+        if (!auth) throw new Error("Nisu uneseni admin kredencijali.");
+        const retry = await fetch("/api/admin/create-short-link", {
+          method: "POST",
+          headers: { "content-type": "application/json", Authorization: auth },
+          body: JSON.stringify({ projectId, scope, slug, ttlHours: ttl }),
+        });
+        if (!retry.ok) {
+          const j = await retry.json().catch(()=>({}));
+          throw new Error(j?.error || `Greška ${retry.status}`);
+        }
+        const j2 = await retry.json();
+        await navigator.clipboard.writeText(j2.shortUrl);
+        notify(`Kratki ${scope.toUpperCase()} link (${ttl}h) kopiran: ${j2.shortUrl}`);
+        return;
+      }
+
+      if (!res.ok) {
+        const j = await res.json().catch(()=>({}));
+        throw new Error(j?.error || `Greška ${res.status}`);
+      }
+
+      const j = await res.json();
+      await navigator.clipboard.writeText(j.shortUrl);
+      notify(`Kratki ${scope.toUpperCase()} link (${ttl}h) kopiran: ${j.shortUrl}`);
+    } catch (e:any) {
+      const msg = e?.message || String(e);
+      setErr(msg);
+      notify(`Greška: ${msg}`);
+    } finally { setBusy(false); }
+  }
+
+  return { run, busy, err };
+}
+
+/* -------------------- Hook za DUGE linkove (server akcije – ostaju) -------------------- */
+function useCopyLink(action: LinkAction, projectId: string, scope: "view"|"edit") {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string|null>(null);
   async function run(copyNotice: (msg: string)=>void, hours: number) {
@@ -90,71 +146,9 @@ function useCopyLong(action: LinkAction, projectId: string, scope: "view"|"edit"
   return { run, busy, err };
 }
 
-/* -------------------- hook: KREATIRAJ KRATKI link preko API-ja -------------------- */
-function useCreateShortAPI(projectId: string, scope: "view"|"edit") {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string|null>(null);
-
-  async function run(slugIn: string, notify: (m:string)=>void, hours: number) {
-    if (!projectId) { notify("Nedostaje projectId."); return; }
-    const slug = slugify(slugIn);
-    if (!slug) { notify("Upiši kratko ime (slug)."); return; }
-    const safeHours = Math.max(1, Math.round(hours)||1);
-
-    setBusy(true); setErr(null);
-    try {
-      let auth = ensureAdminAuthHeader();
-      if (!auth) throw new Error("Nisu uneseni admin kredencijali.");
-
-      const res = await fetch("/api/admin/create-short-link", {
-        method: "POST",
-        headers: { "content-type": "application/json", Authorization: auth },
-        body: JSON.stringify({
-          projectId, scope, slug, ttlHours: safeHours
-        })
-      });
-
-      if (res.status === 401) {
-        sessionStorage.removeItem("admin_basic_auth");
-        auth = ensureAdminAuthHeader(true);
-        if (!auth) throw new Error("Nisu uneseni admin kredencijali.");
-        // ponovi
-        const res2 = await fetch("/api/admin/create-short-link", {
-          method: "POST",
-          headers: { "content-type": "application/json", Authorization: auth },
-          body: JSON.stringify({ projectId, scope, slug, ttlHours: safeHours })
-        });
-        if (!res2.ok) {
-          const j = await res2.json().catch(()=>({}));
-          throw new Error(j?.error || `Greška ${res2.status}`);
-        }
-        const j2 = await res2.json();
-        await navigator.clipboard.writeText(j2.shortUrl);
-        notify(`Kratki ${scope.toUpperCase()} link (${safeHours}h) kopiran: ${j2.shortUrl}`);
-        return;
-      }
-
-      if (!res.ok) {
-        const j = await res.json().catch(()=>({}));
-        throw new Error(j?.error || `Greška ${res.status}`);
-      }
-
-      const j = await res.json();
-      await navigator.clipboard.writeText(j.shortUrl);
-      notify(`Kratki ${scope.toUpperCase()} link (${safeHours}h) kopiran: ${j.shortUrl}`);
-    } catch (e:any) {
-      const msg = e?.message || String(e);
-      setErr(msg);
-      notify(`Greška: ${msg}`);
-    } finally { setBusy(false); }
-  }
-
-  return { run, busy, err };
-}
-
 /* -------------------- ADMIN KOMPONENTA -------------------- */
 export default function AdminProjectClient({
-  paramsId, makeViewLink, makeEditLink, /* makeShortViewLink, makeShortEditLink, */ upsertUnitTypes, deleteUnitType
+  paramsId, makeViewLink, makeEditLink, makeShortViewLink, makeShortEditLink, upsertUnitTypes, deleteUnitType
 }: Props) {
   const [name, setName] = useState("Projekt");
   const [brpLimit, setBrpLimit] = useState(12500);
@@ -164,6 +158,7 @@ export default function AdminProjectClient({
 
   const [tolerance, setTolerance] = useState(50);
   const [projectId, setProjectId] = useState<string|null>(null);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string|null>(null);
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
@@ -172,16 +167,16 @@ export default function AdminProjectClient({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
-  // TTL sati
-  const [hours, setHours] = useState<number>(168);
-  // kratki link slug
-  const [slug, setSlug] = useState("");
+  const [hours, setHours] = useState<number>(168); // TTL za linkove
+  const [slug, setSlug] = useState("");            // slug za kratke linkove
 
-  // HOOKOVI za linkove
-  const copyView  = useCopyLong(makeViewLink,  projectId || "", "view");
-  const copyEdit  = useCopyLong(makeEditLink,  projectId || "", "edit");
-  const shortView = useCreateShortAPI(projectId || "", "view"); // preko API-ja
-  const shortEdit = useCreateShortAPI(projectId || "", "edit"); // preko API-ja
+  // dugi linkovi (server akcije)
+  const copyView  = useCopyLink(makeViewLink,  projectId || "", "view");
+  const copyEdit  = useCopyLink(makeEditLink,  projectId || "", "edit");
+
+  // kratki linkovi (API)
+  const shortView = useCreateShortAPI(projectId || "", "view");
+  const shortEdit = useCreateShortAPI(projectId || "", "edit");
 
   /* -------- FETCH: projekt + tipovi -------- */
   useEffect(() => {
@@ -225,7 +220,7 @@ export default function AdminProjectClient({
     return () => { alive = false; };
   }, [paramsId]);
 
-  /* -------- FETCH: konfiguracije (kao i prije) -------- */
+  /* -------- FETCH: konfiguracije -------- */
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
@@ -245,7 +240,7 @@ export default function AdminProjectClient({
     return () => { alive = false; };
   }, [projectId]);
 
-  /* ---------- Matematika (neovisno o broju tipova) ---------- */
+  /* ---------- Matematika ---------- */
   const base = useMemo(() => {
     const items = types.map(t => {
       const netoPerUnit = Math.round(Number((t.neto_default ?? t.neto) || 0));
@@ -262,6 +257,7 @@ export default function AdminProjectClient({
     };
   }, [types, brpLimit]);
 
+  /* ---------- Debounce za inline spremanja ---------- */
   const saveTypeTimers = useRef<Record<string,number>>({});
   function saveTypeDebounced(id:string, patch: Partial<Pick<UnitType,"neto"|"locked"|"share">>) {
     if (!projectId) return;
@@ -273,6 +269,7 @@ export default function AdminProjectClient({
     },400);
   }
 
+  /* ---------- Admin uređivanje tipova ---------- */
   function addEmptyType() {
     if (!projectId) return;
     setTypes(prev => [
@@ -357,6 +354,20 @@ export default function AdminProjectClient({
     setTypes(prev => prev.filter(t => t.id !== id));
   }
 
+  async function saveProjectName() {
+    if (!projectId) return;
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === name) { setEditingName(false); setNameDraft(name); return; }
+    try {
+      const { error } = await supabase.from("projects").update({ name: trimmed }).eq("id", projectId);
+      if (error) throw error;
+      setName(trimmed); setEditingName(false);
+      setNotice("Naziv projekta ažuriran."); setTimeout(()=>setNotice(null),2500);
+    } catch (e:any) {
+      setNotice(`Greška pri promjeni naziva: ${e?.message ?? e}`); setTimeout(()=>setNotice(null),3500);
+    }
+  }
+
   if (loading) return <main className="p-4">Učitavanje…</main>;
   if (err)     return <main className="p-4 text-red-700">Greška: {err}</main>;
 
@@ -375,8 +386,8 @@ export default function AdminProjectClient({
             <div className="flex items-center gap-2">
               <input className="px-3 py-2 border rounded-xl" value={nameDraft} autoFocus
                      onChange={e=>setNameDraft(e.target.value)}
-                     onKeyDown={e=>{ if (e.key==='Enter') {/* spremi naziv po želji */} if (e.key==='Escape'){ setEditingName(false); setNameDraft(name); } }} />
-              <button className="px-3 py-2 rounded-xl border bg-black text-white" onClick={()=>{/* spremi naziv po želji */}}>Spremi</button>
+                     onKeyDown={e=>{ if (e.key==='Enter') saveProjectName(); if (e.key==='Escape'){ setEditingName(false); setNameDraft(name); } }} />
+              <button className="px-3 py-2 rounded-xl border bg-black text-white" onClick={saveProjectName}>Spremi</button>
               <button className="px-3 py-2 rounded-xl border" onClick={()=>{ setEditingName(false); setNameDraft(name); }}>Odustani</button>
             </div>
           )}
@@ -388,7 +399,6 @@ export default function AdminProjectClient({
             <input className="px-3 py-2 border rounded-xl w-28" type="number" min={1}
                    value={hours} onChange={e=>setHours(Math.max(1, Number(e.target.value)||1))}/>
           </div>
-
           {/* DUGI linkovi (server akcije – ostaju) */}
           <button disabled={!projectId || copyView.busy}
                   onClick={() => projectId && copyView.run((m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
@@ -404,7 +414,7 @@ export default function AdminProjectClient({
               <input className="px-3 py-2 border rounded-xl w-48" placeholder="npr. ivan"
                      value={slug} onChange={e=>setSlug(slugify(e.target.value))}/>
             </div>
-            <button disabled={!projectId || shortView.busy}
+            <button disabled {!projectId || shortView.busy}
                     onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
                     className="px-4 py-2 rounded-xl border"> {shortView.busy ? "…" : "Kratki VIEW"} </button>
             <button disabled={!projectId || shortEdit.busy}
@@ -416,7 +426,75 @@ export default function AdminProjectClient({
 
       {notice && <div className="rounded-xl p-3 bg-emerald-50 text-emerald-800 border border-emerald-200">{notice}</div>}
 
-      {/* Ostatak tvog admin UI-ja (tablica tipova stanova, grafovi, slajderi…) ostaje kako je. */}
+      {/* ---------------- Admin – Tipovi stanova ---------------- */}
+      <section className="card">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="font-semibold">Tipovi stanova (admin)</h3>
+          <div className="flex gap-2">
+            <button onClick={addEmptyType} className="px-3 py-2 rounded-xl border">Dodaj tip</button>
+            <button onClick={saveAllTypes} className="px-3 py-2 rounded-xl border bg-black text-white">Spremi sve</button>
+          </div>
+        </div>
+        <div className="overflow-auto">
+          <table className="w-full text-sm border-separate" style={{borderSpacing:"0 8px"}}>
+            <thead>
+              <tr className="text-left text-gray-600">
+                <th className="px-3">Kod</th>
+                <th className="px-3">Naziv / opis</th>
+                <th className="px-3">NETO min</th>
+                <th className="px-3">NETO default</th>
+                <th className="px-3">NETO max</th>
+                <th className="px-3">Udio %</th>
+                <th className="px-3">Zaključan</th>
+                <th className="px-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {types.map(t => (
+                <tr key={t.id} className="bg-white border rounded-xl">
+                  <td className="px-3 py-2">
+                    <input className="px-2 py-1 border rounded-lg w-28"
+                           value={t.code} onChange={e=>updateTypeLocal(t.id, { code: e.target.value })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input className="px-2 py-1 border rounded-lg w-80"
+                           value={t.description ?? t.desc ?? ""}
+                           onChange={e=>updateTypeLocal(t.id, { description: e.target.value })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className="px-2 py-1 border rounded-lg w-28"
+                           value={t.neto_min ?? ""} onChange={e=>updateTypeLocal(t.id, { neto_min: e.target.value === "" ? null : Number(e.target.value) })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className="px-2 py-1 border rounded-lg w-28"
+                           value={t.neto_default ?? ""} onChange={e=>updateTypeLocal(t.id, { neto_default: e.target.value === "" ? null : Number(e.target.value) })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className="px-2 py-1 border rounded-lg w-28"
+                           value={t.neto_max ?? ""} onChange={e=>updateTypeLocal(t.id, { neto_max: e.target.value === "" ? null : Number(e.target.value) })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="number" className="px-2 py-1 border rounded-lg w-24"
+                           value={Math.round(t.share||0)} onChange={e=>updateTypeLocal(t.id, { share: Number(e.target.value)||0 })}/>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input type="checkbox" checked={!!t.locked}
+                           onChange={e=>updateTypeLocal(t.id, { locked: e.target.checked })}/>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={()=>removeType(t.id)} className="px-3 py-1 rounded-lg border bg-red-600 text-white">Obriši</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-xs text-gray-500 mt-2">
+            Validacija: min ≤ default ≤ max (ako su polja popunjena).
+          </div>
+        </div>
+      </section>
+
+      {/* Ostatak tvog prikaza (grafovi, slajderi…) ostaje isti; ako ga imaš ispod, ne diramo ga. */}
     </main>
   );
 }

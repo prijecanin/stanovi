@@ -3,6 +3,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyShareToken } from "../../../lib/tokens";
 
+type ItemRow = {
+  configuration_id: string;
+  project_unit_type_id: string | null;
+  units: number;
+  neto_per_unit: number | null;
+  label: string | null;
+  idx: number;
+};
+
 export async function POST(req: Request) {
   try {
     // 1) Token iz query stringa (?t=...)
@@ -23,7 +32,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Insufficient scope (edit required)." }, { status: 403 });
     }
 
-    // 3) Parsiranje body-ja (JSON ili FormData)
+    // 3) Body (JSON ili FormData)
     let body: any = null;
     try {
       body = await req.json();
@@ -45,7 +54,7 @@ export async function POST(req: Request) {
     const brp_limit = Number(body.brp_limit ?? body.brpLimit ?? body.brp);
     const tolerance = Number(body.tolerance ?? 50);
 
-    // default ratio ako nije poslan (rješava NOT NULL)
+    // default ratio ako nije poslan
     const rawRatio = Number(body.ratio);
     const ratio = Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 0.65;
 
@@ -85,9 +94,9 @@ export async function POST(req: Request) {
 
     const configurationId = conf!.id as string;
 
-    // 6) Upis stavki u configuration_items (NE u configuration_unit_types)
+    // 6) Upis stavki u configuration_items
     if (Array.isArray(body.items) && body.items.length > 0) {
-      const rows = body.items.map((it: any, idx: number) => ({
+      const rows: ItemRow[] = body.items.map((it: any, idx: number): ItemRow => ({
         configuration_id: configurationId,
         project_unit_type_id: it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
         units: Number(it.units) || 0,
@@ -95,7 +104,12 @@ export async function POST(req: Request) {
         label: typeof it.label === "string" ? it.label : null,
         idx,
       }));
-      const rowsFiltered = rows.filter(r => r.project_unit_type_id);
+
+      // type-guard: zadrži samo one s valjanim project_unit_type_id
+      const rowsFiltered = rows.filter(
+        (r): r is ItemRow & { project_unit_type_id: string } => !!r.project_unit_type_id
+      );
+
       if (rowsFiltered.length > 0) {
         const { error: itemsErr } = await admin
           .from("configuration_items")

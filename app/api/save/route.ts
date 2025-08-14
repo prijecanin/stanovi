@@ -9,6 +9,7 @@ type ItemRow = {
   units: number;
   neto_per_unit: number | null;
   label: string | null;
+  share: number; // NOT NULL u tvojoj shemi
 };
 
 export async function POST(req: Request) {
@@ -86,15 +87,42 @@ export async function POST(req: Request) {
     }
     const configurationId = conf!.id as string;
 
-    // Insert stavki u configuration_items (bez idx kolone)
+    // Insert stavki u configuration_items (S ADA share)
     if (Array.isArray(body.items) && body.items.length > 0) {
-      const rows: ItemRow[] = body.items.map((it: any): ItemRow => ({
-        configuration_id: configurationId,
-        project_unit_type_id: it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
-        units: Number(it.units) || 0,
-        neto_per_unit: it.neto_per_unit != null ? Number(it.neto_per_unit) : null,
-        label: typeof it.label === "string" ? it.label : null,
-      }));
+      const rows: ItemRow[] = body.items.map((it: any): ItemRow => {
+        const units = Number(it.units) || 0;
+        const neto_per_unit =
+          it.neto_per_unit != null ? Number(it.neto_per_unit) : null;
+
+        // brp_per_unit: uzmi iz bodyja ako postoji; fallback iz neto_per_unit/ratio
+        const brp_per_unit =
+          it.brp_per_unit != null
+            ? Number(it.brp_per_unit)
+            : neto_per_unit != null
+              ? Math.max(1, Math.round(neto_per_unit / ratio))
+              : null;
+
+        // share: uzmi iz bodyja ako je broj; inače izračunaj iz units/brp_per_unit/brp_limit
+        const shareRaw =
+          it.share != null && Number.isFinite(Number(it.share))
+            ? Number(it.share)
+            : brp_per_unit != null && brp_limit > 0
+              ? (units * brp_per_unit) / brp_limit * 100
+              : 0;
+
+        // zadrži razuman raspon
+        const share = Math.max(0, Math.min(100, Math.round(shareRaw * 100) / 100));
+
+        return {
+          configuration_id: configurationId,
+          project_unit_type_id:
+            it.project_unit_type_id ?? it.unit_type_id ?? it.id ?? null,
+          units,
+          neto_per_unit,
+          label: typeof it.label === "string" ? it.label : null,
+          share,
+        };
+      });
 
       const rowsFiltered = rows.filter(
         (r): r is ItemRow & { project_unit_type_id: string } => !!r.project_unit_type_id

@@ -15,7 +15,7 @@ type Props = {
   paramsId: string;
   makeViewLink: LinkAction;
   makeEditLink: LinkAction;
-  makeShortViewLink: LinkAction; // ostavljamo u propovima radi kompatibilnosti (ne koristimo)
+  makeShortViewLink: LinkAction; // radi kompatibilnosti (ne koristimo)
   makeShortEditLink: LinkAction; // —||—
   upsertUnitTypes: ServerAction;
   deleteUnitType: ServerAction;
@@ -414,12 +414,20 @@ export default function AdminProjectClient({
               <input className="px-3 py-2 border rounded-xl w-48" placeholder="npr. ivan"
                      value={slug} onChange={e=>setSlug(slugify(e.target.value))}/>
             </div>
-            <button disabled {!projectId || shortView.busy}
-                    onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
-                    className="px-4 py-2 rounded-xl border"> {shortView.busy ? "…" : "Kratki VIEW"} </button>
-            <button disabled={!projectId || shortEdit.busy}
-                    onClick={()=> shortEdit.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
-                    className="px-4 py-2 rounded-xl border bg-amber-500 text-white"> {shortEdit.busy ? "…" : "Kratki EDIT"} </button>
+            <button
+              disabled={!projectId || shortView.busy}
+              onClick={()=> shortView.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
+              className="px-4 py-2 rounded-xl border"
+            >
+              {shortView.busy ? "…" : "Kratki VIEW"}
+            </button>
+            <button
+              disabled={!projectId || shortEdit.busy}
+              onClick={()=> shortEdit.run(slug, (m)=>{ setNotice(m); setTimeout(()=>setNotice(null),2500); }, hours)}
+              className="px-4 py-2 rounded-xl border bg-amber-500 text-white"
+            >
+              {shortEdit.busy ? "…" : "Kratki EDIT"}
+            </button>
           </div>
         </div>
       </div>
@@ -493,8 +501,6 @@ export default function AdminProjectClient({
           </div>
         </div>
       </section>
-
-      {/* Ostatak tvog prikaza (grafovi, slajderi…) ostaje isti; ako ga imaš ispod, ne diramo ga. */}
     </main>
   );
 }

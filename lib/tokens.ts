@@ -1,6 +1,4 @@
-// src/lib/tokens.ts ili app/lib/tokens.ts (ovisno gdje ti je "@/lib")
-// Pazimo da SVI koriste isti secret: SHARE_TOKEN_SECRET
-
+// lib/tokens.ts
 import jwt from "jsonwebtoken";
 
 export type ShareScope = "view" | "edit";
@@ -19,8 +17,6 @@ const SECRET =
   process.env.NEXTAUTH_SECRET;
 
 if (!SECRET) {
-  // Ako buildaš na Vercelu, postavi env var SHARE_TOKEN_SECRET
-  // u Project Settings → Environment Variables.
   throw new Error("SHARE_TOKEN_SECRET (ili JWT/NEXTAUTH_SECRET) nije postavljen.");
 }
 
@@ -33,7 +29,6 @@ export function makeShareToken(
   data: { projectId: string; scope: ShareScope },
   ttlSeconds: number
 ): string {
-  // jwt.sign je sync; iat/exp se popunjavaju automatski uz expiresIn
   return jwt.sign(
     { projectId: data.projectId, scope: data.scope } as SharePayload,
     SECRET,
@@ -43,7 +38,7 @@ export function makeShareToken(
 
 /**
  * Provjerava token — baca grešku ako je neispravan/istekao.
- * Vraća dekodirani payload (bez "valid" polja).
+ * Vraća dekodirani payload.
  */
 export async function verifyShareToken(token: string): Promise<SharePayload> {
   const decoded = jwt.verify(token, SECRET) as SharePayload;

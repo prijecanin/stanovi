@@ -1,50 +1,56 @@
 // lib/tokens.ts
-import jwt from "jsonwebtoken";
+import jwt, { JwtPayload } from "jsonwebtoken";
 
 export type ShareScope = "view" | "edit";
 
-export type SharePayload = {
+export interface SharePayload {
   projectId: string;
   scope: ShareScope;
-  iat?: number; // unix seconds
-  exp?: number; // unix seconds
-};
-
-// --- SECRET: osiguraj da je string (ne undefined) ---
-const SECRET_CANDIDATE =
-  process.env.SHARE_TOKEN_SECRET ??
-  process.env.JWT_SECRET ??
-  process.env.NEXTAUTH_SECRET;
-
-if (!SECRET_CANDIDATE) {
-  throw new Error("SHARE_TOKEN_SECRET (ili JWT/NEXTAUTH_SECRET) nije postavljen.");
 }
-const SECRET: string = SECRET_CANDIDATE; // <-- sada je eksplicitno string
+
+function getSecret(): string {
+  const s = process.env.SHARE_TOKEN_SECRET || process.env.JWT_SECRET;
+  if (!s) {
+    // Namjerno bacamo grešku tek kad se funkcije pozovu (ne na importu modula).
+    throw new Error("Missing SHARE_TOKEN_SECRET (or JWT_SECRET) env var.");
+  }
+  return s;
+}
 
 /**
- * Kreira kratkotrajni token za dijeljenje linka (view/edit).
- * @param data { projectId, scope }
- * @param ttlSeconds npr. 3600 * 24 * 7 (7 dana)
+ * Generira JWT s payloadom { projectId, scope } i rokom trajanja u sekundama.
  */
-export function makeShareToken(
-  data: { projectId: string; scope: ShareScope },
+export function generateShareToken(
+  data: SharePayload,
   ttlSeconds: number
 ): string {
   return jwt.sign(
-    { projectId: data.projectId, scope: data.scope } as SharePayload,
-    SECRET,
+    { projectId: data.projectId, scope: data.scope },
+    getSecret(),
     { expiresIn: ttlSeconds }
   );
 }
 
 /**
- * Provjerava token — baca grešku ako je neispravan/istekao.
- * Vraća dekodirani payload.
+ * Validira i vraća payload iz tokena.
+ * Baca grešku ako je token nevažeći/istekao ili payload nije očekivan.
  */
-export async function verifyShareToken(token: string): Promise<SharePayload> {
-  const decoded = jwt.verify(token, SECRET) as SharePayload;
-  if (!decoded?.projectId || (decoded.scope !== "view" && decoded.scope !== "edit")) {
+export function verifyShareToken(
+  token: string
+): SharePayload & { exp: number; iat?: number } {
+  const decoded = jwt.verify(token, getSecret()) as JwtPayload;
+
+  const projectId = decoded.projectId as string | undefined;
+  const scope = decoded.scope as ShareScope | undefined;
+
+  if (!projectId || (scope !== "view" && scope !== "edit")) {
     throw new Error("Invalid token payload.");
   }
-  return decoded;
+
+  return {
+    projectId,
+    scope,
+    exp: decoded.exp!,
+    iat: decoded.iat,
+  };
 }

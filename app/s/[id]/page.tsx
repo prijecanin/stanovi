@@ -375,9 +375,14 @@ export default function SharePage({ params }: { params: { id: string } }) {
       setSaving(true); setNotice(null);
 
       const body = {
+        // oboje šaljemo radi kompatibilnosti s API-jem
         projectId,
         name: confName,
-        brpLimit,
+        brpLimit,               // ako API čita camelCase
+        brp_limit: brpLimit,    // ako API očekuje snake_case
+        ratio: RATIO,           // << KLJUČNO: više neće biti NULL u bazi
+        // (opcionalno) tolerance: 50,
+        source: 'client',
         clientKey,
         clientName,
         items: calc.items.map(i => ({
@@ -518,7 +523,7 @@ export default function SharePage({ params }: { params: { id: string } }) {
           <h2 className="text-xl font-semibold leading-none">{name}</h2>
           {!canEdit && (
             <span className="text-xs px-2 py-1 rounded-md bg-gray-100 text-gray-600">
-              Read‑only link (lokalne promjene nisu vidljive drugima)
+              Read-only link (lokalne promjene nisu vidljive drugima)
             </span>
           )}
         </div>

@@ -99,6 +99,7 @@ type UpsertTypeRow = {
   neto_min?: number | null;
   neto_max?: number | null;
   neto_default?: number | null;
+  neto?: number | null;          // ⬅️ DODANO: za NOT NULL kolonu
   share?: number | null;
   locked?: boolean | null;
   idx?: number | null;
@@ -135,27 +136,35 @@ const upsertUnitTypes = async (_: any, formData: FormData) => {
     const toUpdate = rows.filter(r => r.id);
 
     if (toInsert.length) {
-      const { error } = await admin.from("project_unit_types").insert(toInsert.map(r => ({
-        project_id: r.project_id,
-        code: r.code,
-        description: r.description ?? null,
-        neto_min: r.neto_min ?? null,
-        neto_max: r.neto_max ?? null,
-        neto_default: r.neto_default ?? (r.neto_min ?? r.neto_max ?? null),
-        share: r.share ?? 0,
-        locked: r.locked ?? false,
-        idx: r.idx ?? null
-      })));
+      const { error } = await admin.from("project_unit_types").insert(toInsert.map(r => {
+        const neto =
+          (r.neto_default ?? r.neto ?? r.neto_min ?? r.neto_max ?? 50) as number;
+        return {
+          project_id: r.project_id,
+          code: r.code,
+          description: r.description ?? null,
+          neto_min: r.neto_min ?? null,
+          neto_max: r.neto_max ?? null,
+          neto_default: r.neto_default ?? (r.neto_min ?? r.neto_max ?? null),
+          neto,                            // ⬅️ uvijek postavljamo
+          share: r.share ?? 0,
+          locked: r.locked ?? false,
+          idx: r.idx ?? null
+        };
+      }));
       if (error) return { error: error.message };
     }
 
     for (const r of toUpdate) {
+      const neto =
+        (r.neto_default ?? r.neto ?? r.neto_min ?? r.neto_max ?? 50) as number;
       const { error } = await admin.from("project_unit_types").update({
         code: r.code,
         description: r.description ?? null,
         neto_min: r.neto_min ?? null,
         neto_max: r.neto_max ?? null,
         neto_default: r.neto_default ?? null,
+        neto,                            // ⬅️ ažuriramo da nije NULL
         share: r.share ?? null,
         locked: r.locked ?? null,
         idx: r.idx ?? null

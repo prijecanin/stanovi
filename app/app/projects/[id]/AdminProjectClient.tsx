@@ -319,6 +319,7 @@ export default function AdminProjectClient({
       neto_min: t.neto_min!=null ? Number(t.neto_min) : null,
       neto_max: t.neto_max!=null ? Number(t.neto_max) : null,
       neto_default: t.neto_default!=null ? Number(t.neto_default) : (t.neto ?? null),
+      neto: (t.neto_default ?? t.neto ?? t.neto_min ?? t.neto_max ?? 50) as number, // ⬅️ DODANO
       share: Number.isFinite(t.share) ? Number(t.share) : 0,
       locked: !!t.locked,
       idx: t.idx ?? null

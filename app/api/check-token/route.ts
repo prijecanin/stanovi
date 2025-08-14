@@ -1,5 +1,9 @@
+// app/api/check-token/route.ts
 import { NextResponse } from "next/server";
-import { verifyShareToken } from "@/lib/tokens";
+import { verifyShareToken } from "../../../lib/tokens"; // <-- promijenjeno iz @/lib/tokens
+
+// ... ostatak koda ostaje isti ...
+
 
 function nocacheHeaders() {
   return {

@@ -2,7 +2,7 @@
 import { headers } from "next/headers";
 import AdminProjectClient from "./AdminProjectClient";
 import { createClient } from "@supabase/supabase-js";
-import { makeShareToken } from "@/lib/tokens";
+import { makeShareToken } from "../../../../lib/tokens"; // <-- promijenjeno iz @/lib/tokens
 
 function getOrigin() {
   const h = headers();

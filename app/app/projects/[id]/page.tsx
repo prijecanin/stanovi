@@ -12,7 +12,7 @@ function getOrigin() {
   return `${proto}://${host}`;
 }
 
-/* ----------------- LINKOVI (isto kao ranije, s TTL satima) ----------------- */
+/* ----------------- LINKOVI (s TTL satima) ----------------- */
 const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
   return async (_: any, formData: FormData) => {
     "use server";
@@ -20,10 +20,19 @@ const makeLinkFactory = (paramsId: string, scope: "view" | "edit") => {
       const formPid = String(formData.get("projectId") || "").trim();
       const projectId = formPid || paramsId;
       if (!projectId) return { error: "projectId nedostaje." };
-      if (!process.env.LINK_SECRET) return { error: "LINK_SECRET nije postavljen." };
+
+      // provjera da je secret postavljen (isti kao u tokens.ts)
+      if (
+        !process.env.SHARE_TOKEN_SECRET &&
+        !process.env.JWT_SECRET &&
+        !process.env.NEXTAUTH_SECRET
+      ) {
+        return { error: "SHARE_TOKEN_SECRET/JWT_SECRET/NEXTAUTH_SECRET nije postavljen." };
+      }
+
       const origin = getOrigin();
       const hours = Math.max(1, parseInt(String(formData.get("hours") || "168"), 10) || 168);
-      const token = await makeShareToken({ projectId, scope }, hours * 3600);
+      const token = makeShareToken({ projectId, scope }, hours * 3600);
       const link  = `${origin}/s/${encodeURIComponent(projectId)}?t=${encodeURIComponent(token)}`;
       return { link };
     } catch (e: any) {
@@ -41,11 +50,18 @@ const makeShortFactory = (paramsId: string, scope: "view" | "edit") => {
       if (!projectId) return { error: "projectId nedostaje." };
       if (!slug) return { error: "slug nedostaje." };
       if (!/^[a-z0-9-]{2,48}$/.test(slug)) return { error: "Neispravan slug (a-z, 0-9, -, 2–48 znakova)." };
-      if (!process.env.LINK_SECRET) return { error: "LINK_SECRET nije postavljen." };
+
+      if (
+        !process.env.SHARE_TOKEN_SECRET &&
+        !process.env.JWT_SECRET &&
+        !process.env.NEXTAUTH_SECRET
+      ) {
+        return { error: "SHARE_TOKEN_SECRET/JWT_SECRET/NEXTAUTH_SECRET nije postavljen." };
+      }
 
       const origin = getOrigin();
       const hours = Math.max(1, parseInt(String(formData.get("hours") || "168"), 10) || 168);
-      const token = await makeShareToken({ projectId, scope }, hours * 3600);
+      const token = makeShareToken({ projectId, scope }, hours * 3600);
       const longUrl = `${origin}/s/${encodeURIComponent(projectId)}?t=${encodeURIComponent(token)}`;
 
       const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -75,7 +91,7 @@ const makeShortFactory = (paramsId: string, scope: "view" | "edit") => {
   };
 };
 
-/* ----------------- TIPOVI (NOVO) – server akcije ----------------- */
+/* ----------------- TIPOVI (server akcije) ----------------- */
 type UpsertTypeRow = {
   id?: string | null;
   project_id: string;
@@ -100,7 +116,6 @@ const upsertUnitTypes = async (_: any, formData: FormData) => {
     const payloadStr = String(formData.get("payload") || "[]");
     const rows = JSON.parse(payloadStr) as UpsertTypeRow[];
 
-    // validacija osnovna
     for (const r of rows) {
       if (!r.project_id) return { error: "project_id je obavezan." };
       if (!r.code || !/^[a-zA-Z0-9\-_.]{1,24}$/.test(r.code)) return { error: `Neispravan code za tip: "${r.code}"` };
@@ -117,7 +132,6 @@ const upsertUnitTypes = async (_: any, formData: FormData) => {
       }
     }
 
-    // upsert po id-u; ako nema id, insert
     const toInsert = rows.filter(r => !r.id);
     const toUpdate = rows.filter(r => r.id);
 
@@ -146,7 +160,7 @@ const upsertUnitTypes = async (_: any, formData: FormData) => {
         share: r.share ?? null,
         locked: r.locked ?? null,
         idx: r.idx ?? null
-      }).eq("id", r.id);
+      }).eq("id", r.id as string);
       if (error) return { error: error.message };
     }
 
@@ -154,7 +168,7 @@ const upsertUnitTypes = async (_: any, formData: FormData) => {
   } catch (e: any) {
     return { error: e?.message || "Greška pri spremanju tipova." };
   }
-}
+};
 
 const deleteUnitType = async (_: any, formData: FormData) => {
   "use server";
@@ -173,7 +187,7 @@ const deleteUnitType = async (_: any, formData: FormData) => {
   } catch (e: any) {
     return { error: e?.message || "Greška pri brisanju tipa." };
   }
-}
+};
 
 export default function Page({ params }: { params: { id: string } }) {
   return (

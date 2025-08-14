@@ -1,38 +1,54 @@
-// lib/tokens.ts
-import { SignJWT, jwtVerify } from "jose";
+// src/lib/tokens.ts ili app/lib/tokens.ts (ovisno gdje ti je "@/lib")
+// Pazimo da SVI koriste isti secret: SHARE_TOKEN_SECRET
 
-// helper: dohvat tajne kada treba (ne na importu)
-function getSecretBytes() {
-  const s = process.env.LINK_SECRET;
-  if (!s) {
-    throw new Error("LINK_SECRET nije postavljen.");
-  }
-  return new TextEncoder().encode(s);
-}
+import jwt from "jsonwebtoken";
 
-// siguran rand UUID i u Node i u Edge okruženju
-function makeJti(): string {
-  // globalThis.crypto postoji i u Edge runtimeu
-  // fallback ako ga nema
-  const r = (globalThis as any).crypto?.randomUUID?.();
-  return r ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
+export type ShareScope = "view" | "edit";
 
 export type SharePayload = {
   projectId: string;
-  scope: "view" | "edit";
+  scope: ShareScope;
+  iat?: number; // unix seconds
+  exp?: number; // unix seconds
 };
 
-export async function makeShareToken(payload: SharePayload, ttlSec = 7 * 24 * 3600) {
-  const jti = makeJti();
-  return await new SignJWT({ ...payload, jti })
-    .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime(Math.floor(Date.now() / 1000) + ttlSec)
-    .setJti(jti)
-    .sign(getSecretBytes()); // <- tajna se čita tek sad
+// Jedan, centralni secret za potpis/provjeru
+const SECRET =
+  process.env.SHARE_TOKEN_SECRET ||
+  process.env.JWT_SECRET ||
+  process.env.NEXTAUTH_SECRET;
+
+if (!SECRET) {
+  // Ako buildaš na Vercelu, postavi env var SHARE_TOKEN_SECRET
+  // u Project Settings → Environment Variables.
+  throw new Error("SHARE_TOKEN_SECRET (ili JWT/NEXTAUTH_SECRET) nije postavljen.");
 }
 
-export async function verifyShareToken(token: string) {
-  const { payload } = await jwtVerify(token, getSecretBytes()); // <- i ovdje
-  return payload as SharePayload & { exp: number; jti?: string };
+/**
+ * Kreira kratkotrajni token za dijeljenje linka (view/edit).
+ * @param data { projectId, scope }
+ * @param ttlSeconds npr. 3600 * 24 * 7 (7 dana)
+ */
+export function makeShareToken(
+  data: { projectId: string; scope: ShareScope },
+  ttlSeconds: number
+): string {
+  // jwt.sign je sync; iat/exp se popunjavaju automatski uz expiresIn
+  return jwt.sign(
+    { projectId: data.projectId, scope: data.scope } as SharePayload,
+    SECRET,
+    { expiresIn: ttlSeconds }
+  );
+}
+
+/**
+ * Provjerava token — baca grešku ako je neispravan/istekao.
+ * Vraća dekodirani payload (bez "valid" polja).
+ */
+export async function verifyShareToken(token: string): Promise<SharePayload> {
+  const decoded = jwt.verify(token, SECRET) as SharePayload;
+  if (!decoded?.projectId || (decoded.scope !== "view" && decoded.scope !== "edit")) {
+    throw new Error("Invalid token payload.");
+  }
+  return decoded;
 }
